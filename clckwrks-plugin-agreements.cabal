@@ -78,6 +78,7 @@ executable             agreements-settings
     buildable: False
   hs-source-dirs:      agreements-settings
   main-is:             AgreementsSettings.hs
+  other-modules:       Chili.FormArrow
   build-depends:       base
                      , bytestring
                      , cereal

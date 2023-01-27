@@ -24,7 +24,6 @@ instance Category Validator where
           (ValidationFailure ve)   -> pure $ ValidationFailure ve
   id = Validator $ \a -> pure $ ValidationSuccess "" a
 
-
 data FormArrow b c where
   FormId         :: FormArrow b b
   FormFun        :: (b -> c) -> FormArrow b c
@@ -33,7 +32,7 @@ data FormArrow b c where
   FormElem       :: Text -> [(Text, Text)] -> FormArrow b c -> FormArrow b c
   FormElemAttrs  :: Text -> [(Text, Text)] -> (b -> [(Text, Text)]) -> FormArrow b c -> FormArrow b c
   FormLabel      :: Maybe Text -> Text -> FormArrow b c -> FormArrow b c
-  FormInput      :: InputType -> Bool -> FormArrow a Text
+  FormInput      :: InputType -> Bool -> FormArrow (Maybe Text) Text
   FormTextArea   :: Bool -> FormArrow Text Text
   FormCat        :: FormArrow c d -> FormArrow b c   -> FormArrow b d
   FormSplit      :: FormArrow b c -> FormArrow b' c' -> FormArrow (b, b') (c, c')
@@ -64,6 +63,25 @@ instance Show (FormArrow b c) where
   show (FormErrorRight a r) = "FormErrorRight (" ++ show a ++ ") (" ++ show r ++ ")"
 --   show (FormChoice f g)    = "FormChoice (" ++ show f ++ ") (" ++ show g ++ ")"
 
+instance Functor (FormArrow b) where
+  fmap f FormId = FormFun f
+  fmap f (FormFun g) = FormFun $ f . g
+  fmap f frm = FormCat (FormFun f) frm
+
+{- This should be possible, but not worried about it yet.
+
+instance Applicative (FormArrow b) where
+  pure c = FormFun (\_ -> c)
+--  f <*> x = arr (uncurry (flip ($))) . first x . arr swap . first f . arr dup
+  (FormFun f) <*> frm =
+    FormFun $ \a -> fmap (f a) frm
+-}
+
+{-
+   where
+     dup x = (x,x)
+     swap (x,y) = (x,y)
+-}
 data InputType
   = InputText
   | InputSubmit
@@ -83,23 +101,33 @@ instance Arrow FormArrow where
 --  second = FormSecond
   a *** b = FormSplit a b
 --  a &&& b = error "&&& not implemented"
-
+{-
+data FormAction
+  = SetValue b
+  | GetValue b
+  deriving Show
+-}
 renderForm :: JSNode -> JSDocument -> FormArrow b c -> IO (b -> IO c)
 renderForm parent d frm =
   case frm of
     (FormFun f) ->
       pure $ \b -> pure (f b)
 
-    (FormInput it required) ->
+    (FormInput iType required) ->
       do (Just e) <- createJSElement d "input"
-         setAttribute e "type" (inputType it)
+         setAttribute e "type" (inputType iType)
          when required $ setAttribute e "required" ""
 --         setValue e init
          appendChild parent e
-         pure $ \_ ->
-           do (Just v) <- fmap textFromJSString <$> getValue e
-              putStrLn $ "FormInput = " ++ show v
-              pure v
+         pure $ \mValue ->
+           case mValue of
+             Nothing ->
+               do (Just v) <- fmap textFromJSString <$> getValue e
+                  putStrLn $ "FormInput = " ++ show v
+                  pure v
+             (Just val) ->
+               do setValue e val
+                  pure val
 
     (FormCat f g) ->
       do gg <- renderForm parent d g
@@ -133,22 +161,22 @@ renderForm parent d frm =
     (FormValidator (Validator validator) f) ->
       do fg <- renderForm parent d f
          pure $ \b ->
-           do putStrLn $ "FormValidator"
+           do -- putStrLn $ "FormValidator"
               mc <- fg (Right b)
               case mc of
                 Nothing ->
-                  do putStrLn "FormValidator - mc = Nothing"
+                  do -- putStrLn "FormValidator - mc = Nothing"
                      pure Nothing
                 (Just c) ->
-                  do putStrLn "FormValidator - validating"
+                  do -- putStrLn "FormValidator - validating"
                      ve <- validator c
                      case ve of
                        ValidationSuccess _ d ->
-                         do putStrLn "FormValidator - validation success"
+                         do -- putStrLn "FormValidator - validation success"
                             fg (Left ve)
                             pure $ Just d
                        ValidationFailure vf ->
-                         do putStrLn "FormValidator - validation failure"
+                         do -- putStrLn "FormValidator - validation failure"
                             fg (Left ve)
                             pure $ Nothing
 
@@ -527,78 +555,6 @@ controlGroup frm = divCG frm
        mkAttrs (Left (ValidationFailure (ValidationInfo {})))    = [("class","control-group info")]
        mkAttrs (Left (ValidationFailure (ValidationNone {})))    = [("class","control-group")]
 
-{-
-controlGroup :: (c -> IO (ValidationStatus d)) -> FormArrow b c -> FormArrow b (Maybe d)
-controlGroup validator frm =
-  proc b ->
-    do -- c <- divCG $ FormValidator validator undefined {- (frm +++ errorSpan) -} -< b
-       c <- FormValidator validator $ divCG $
-         div_ "controls" $
-           FormErrorRight frm errorSpan  -< b
-       returnA -< c
-  where
-   divCG :: FormArrow (Either ValidationError b) c -> FormArrow (Either ValidationError b) c
-   divCG frm = FormElemAttrs "div" mkAttrs frm
-     where
-       mkAttrs (Right _)                     = [("class","control-group")]
-       mkAttrs (Left (ValidationWarning {})) = [("class","control-group warning")]
-       mkAttrs (Left (ValidationError {}))   = [("class","control-group error")]
-       mkAttrs (Left (ValidationInfo {}))    = [("class","control-group info")]
-       mkAttrs (Left (ValidationNone {}))    = [("class","control-group")]
--}
-{-
-  where
-    cgClass ValidationNone = "control-group"
--}
-
-
--- newAgreementForm :: FormArrow (Text, Text) (Maybe Text)
-{-
-newAgreementForm :: FormArrow (Text, Text) (Maybe Text)
-newAgreementForm =
-  proc txt ->
-   do newText <- FormValidator equalText $ fanError >>> FormSplit
-        (controlGroup $ div_ "controls" (FormErrorRight (FormInput InputText True) errorSpan))
-        (controlGroup $ div_ "controls" (FormErrorRight (FormInput InputText True) errorSpan)) -< txt
-      _ <- div_ "control-group" $ div_ "controls" (FormInput InputSubmit True) -< "Submit"
-      returnA -< newText
--}
-{-
-newAgreementForm :: FormArrow (Text, Text) (Text, Text)
-newAgreementForm =
-   proc txt ->
-     do r <- (FormSplit (FormInput InputText True) (FormInput InputText True)) -< txt
-        returnA -< r
-
-{-
-        (controlGroup $ div_ "controls" (FormErrorRight (FormInput InputText True) errorSpan))
-        (controlGroup $ div_ "controls" (FormErrorRight (FormInput InputText True) errorSpan)) -< txt
-      _ <- div_ "control-group" $ div_ "controls" (FormInput InputSubmit True) -< "Submit"
-      returnA -< newText
--}
-  where
---     fanError :: FormArrow (Either ValidationError Text, Either ValidationError Text) (Text, Text) -> FormArrow (Either ValidationError (Text, Text)) (Text, Text)
-    fanError = (FormFun $ \x ->
-      case x of
-        (Left err) -> (Left err, Left err)
-        (Right (x,y)) -> (Right x, Right y))
-
-    nonEmptyText :: Text -> IO (ValidationStatus Text)
-    nonEmptyText t
-      | Text.null t = pure $ ValidationFailure $ ValidationError "field can not be empty"
-      | otherwise   = pure $ ValidationSuccess "" t
-
-
-    equalText :: (Text, Text) -> IO (ValidationStatus Text)
-    equalText (c, c')
-      | c == c'   = pure $ ValidationSuccess "" c
-      | otherwise = pure $ ValidationFailure $ ValidationError "fields are not the same"
--}
-{-
-composedForm :: FormArrow Text Text
-composedForm =
-  FormCat (FormInput InputText False) (FormInput InputText False)
--}
 
 nonEmptyText :: Text -> IO (ValidationStatus Text)
 nonEmptyText t
@@ -625,6 +581,16 @@ maybeMaybe = FormFun $
     case (ma, mb) of
       (Just a, Just b) -> Just (a, b)
       _                -> Nothing
+
+-- eitherMerge :: (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text)) -> Either (ValidationStatus sa) (Maybe Text, Maybe Text)
+-- eitherMerge = undefined
+
+eitherSplit :: FormArrow (Either (ValidationStatus s) (Maybe Text, Maybe Text)) (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text))
+eitherSplit = FormFun $
+  \e ->
+    case e of
+      (Left vs)       -> (Left vs, Left vs)
+      (Right (t1,t2)) -> (Right t1, Right t2)
 
 label :: Text -> FormArrow a a
 label txt =
