@@ -32,7 +32,7 @@ data FormArrow b c where
   FormElem       :: Text -> [(Text, Text)] -> FormArrow b c -> FormArrow b c
   FormElemAttrs  :: Text -> [(Text, Text)] -> (b -> [(Text, Text)]) -> FormArrow b c -> FormArrow b c
   FormLabel      :: Maybe Text -> Text -> FormArrow b c -> FormArrow b c
-  FormInput      :: InputType -> Bool -> FormArrow (Maybe Text) Text
+  FormInput      :: InputType -> Bool -> FormArrow Text Text
   FormTextArea   :: Bool -> FormArrow Text Text
   FormCat        :: FormArrow c d -> FormArrow b c   -> FormArrow b d
   FormSplit      :: FormArrow b c -> FormArrow b' c' -> FormArrow (b, b') (c, c')
@@ -101,17 +101,17 @@ instance Arrow FormArrow where
 --  second = FormSecond
   a *** b = FormSplit a b
 --  a &&& b = error "&&& not implemented"
-{-
+
 data FormAction
-  = SetValue b
-  | GetValue b
+  = SetValue
+  | Validate
   deriving Show
--}
-renderForm :: JSNode -> JSDocument -> FormArrow b c -> IO (b -> IO c)
+
+renderForm :: JSNode -> JSDocument -> FormArrow b c -> IO ((FormAction, b) -> IO c)
 renderForm parent d frm =
   case frm of
     (FormFun f) ->
-      pure $ \b -> pure (f b)
+      pure $ \(_, b) -> pure (f b)
 
     (FormInput iType required) ->
       do (Just e) <- createJSElement d "input"
@@ -119,66 +119,70 @@ renderForm parent d frm =
          when required $ setAttribute e "required" ""
 --         setValue e init
          appendChild parent e
-         pure $ \mValue ->
-           case mValue of
-             Nothing ->
+         pure $ \(action, val) ->
+           case action of
+             Validate ->
                do (Just v) <- fmap textFromJSString <$> getValue e
                   putStrLn $ "FormInput = " ++ show v
                   pure v
-             (Just val) ->
+             SetValue ->
                do setValue e val
                   pure val
 
     (FormCat f g) ->
       do gg <- renderForm parent d g
          fg <- renderForm parent d f
-         pure $ (\b ->
-                   do c <- gg b
-                      fg c)
+         pure $ (\b@(action,_) ->
+                    do c <- gg b
+                       fg (action, c)
+                )
+
 
     (FormSplit f g) ->
       do fg <- renderForm parent d f
          gg <- renderForm parent d g
-         pure $ \(b, b') ->
-           do c  <- fg b
-              c' <- gg b'
+         pure $ \(action, (b, b')) ->
+           do c  <- fg (action, b)
+              c' <- gg (action, b')
               pure (c, c')
 
     (FormErrorRight f er) ->
       do fg <- renderForm parent d f
          eg <- renderForm parent d er
-         pure $ \x ->
+         pure $ \(action, x) ->
            case x of
              (Left ve) ->
                do -- putStrLn $ "FormErrorRight - " ++ show ve
-                  eg ve
+                  eg (action, ve)
                   pure Nothing
              (Right b) ->
-               do c <- fg b
+               do c <- fg (action, b)
                   pure (Just c)
-
 
     (FormValidator (Validator validator) f) ->
       do fg <- renderForm parent d f
-         pure $ \b ->
-           do -- putStrLn $ "FormValidator"
-              mc <- fg (Right b)
-              case mc of
-                Nothing ->
-                  do -- putStrLn "FormValidator - mc = Nothing"
-                     pure Nothing
-                (Just c) ->
-                  do -- putStrLn "FormValidator - validating"
-                     ve <- validator c
-                     case ve of
-                       ValidationSuccess _ d ->
-                         do -- putStrLn "FormValidator - validation success"
-                            fg (Left ve)
-                            pure $ Just d
-                       ValidationFailure vf ->
-                         do -- putStrLn "FormValidator - validation failure"
-                            fg (Left ve)
-                            pure $ Nothing
+         pure $ \(action, b) ->
+           do putStrLn $ "FormValidator"
+              mc <- fg (action, Right b)
+              case action of
+                SetValue -> pure Nothing
+                Validate ->
+                  case mc of
+                    Nothing ->
+                      do putStrLn "FormValidator - mc = Nothing"
+                         pure Nothing
+                    (Just c) ->
+                      do putStrLn "FormValidator - validating"
+                         ve <- validator c
+                         case ve of
+                           ValidationSuccess _ d ->
+                             do putStrLn "FormValidator - validation success"
+                                fg (action, Left ve)
+                                pure $ Just d
+                           ValidationFailure vf ->
+                             do putStrLn "FormValidator - validation failure"
+                                fg (action, Left ve)
+                                pure $ Nothing
 
     FormSpan mClass iText ->
       do (Just e) <- createJSElement d "span"
@@ -188,9 +192,9 @@ renderForm parent d frm =
            Nothing -> pure ()
            (Just cls) ->
              setAttribute e "class" cls
-         pure $ \t ->
-           do putStrLn "update span contents"
-              setTextContent e t
+         pure $ \(action,t) ->
+               do putStrLn "update span contents"
+                  setTextContent e t
 
     (FormElem nm attrs f) ->
       do (Just e) <- createJSElement d nm
@@ -206,319 +210,18 @@ renderForm parent d frm =
          r <- renderForm (toJSNode e) d f
          mapM_ (\(a,v) -> setAttribute e a v) initAttrs
          appendChild parent e
-         pure $ (\b -> do c <- r b
+         pure $ (\(action,b) ->
+                       do c <- r (action, b)
                           mapM_ (\(a,v) -> setAttribute e a v) (attrsFn b)
                           pure c
                 )
-{-
-         where
-           update :: JSNode -> Text -> IO ()
-           update spanNode newText =
-             do putStrLn $ "update span with " ++ show newText
-                setTextContent spanNode newText
--}
-{-
-           
-           do mc <- fg b
-              case mc of
-                Nothing -> pure Nothing
-                (Just c) ->
-                  do vs <- validator c
-                     case vs of
-                       (ValidationSuccess _ d) -> pure $ Just d
-                       _                       -> pure $ Nothing
--}
-{-
-                  (s1, g1) <- renderForm parent d a v
-         (s2, g2) <- renderForm parent d er ValidationNone
--}
-    _ -> error $ "renderForm: not implemented - " ++ show frm
-{-
-         pure $ (putter e, getter e)
-           where
-             putter e newValue = setValue e newValue
-             getter e =
-               do (Just v) <- fmap textFromJSString <$> getValue e
-                  putStrLn $ "FormInput = " ++ show v
-                  pure v -- (textFromJSString . fromJust) <$> getValue e
--}
-{-
-renderForm :: JSNode -> JSDocument -> FormArrow b c -> b -> IO (b -> IO (), IO c)
-renderForm parent d frm init =
-  case frm of
-    FormId ->
-      do ref <- newIORef init
-         pure $ (\b -> writeIORef ref b, readIORef ref)
-
-    (FormFun f) ->
-      do ref <- newIORef (f init)
-         pure $ (\b -> writeIORef ref (f b), readIORef ref)
-
-    (FormFirst frm') ->
-      do (s,g) <- renderForm parent d frm' (fst init)
-         ref <- newIORef (snd init)
-
-         pure (\(b, d) ->
-                 do writeIORef ref d
-                    s b
-              , do c <- g
-                   d <- readIORef ref
-                   pure (c, d)
-              )
-
-    (FormSecond frm') ->
-      do (s,g) <- renderForm parent d frm' (snd init)
-         ref <- newIORef (fst init)
-
-         pure (\(d, b) ->
-                 do writeIORef ref d
-                    s b
-              , do c <- g
-                   d <- readIORef ref
-                   pure (d, c)
-              )
-
-
-    (FormInput it required) ->
-      do (Just e) <- createJSElement d "input"
-         setAttribute e "type" (inputType it)
-         when required $ setAttribute e "required" ""
-         setValue e init
-         appendChild parent e
-         pure $ (putter e, getter e)
-           where
-             putter e newValue = setValue e newValue
-             getter e =
-               do (Just v) <- fmap textFromJSString <$> getValue e
-                  putStrLn $ "FormInput = " ++ show v
-                  pure v -- (textFromJSString . fromJust) <$> getValue e
-
-    (FormTextArea required) ->
-      do (Just e) <- createJSElement d "textarea"
-         when required $ setAttribute e "required" ""
-         appendChild parent e
-         pure $ (putter e, getter e)
-           where
-             putter e newValue = setValue e newValue
-             getter e = (textFromJSString . fromJust) <$> getValue e
-
-    (FormSplit c1 c2) ->
-      do (s1,g1) <- renderForm parent d c1 (fst init)
-         (s2,g2) <- renderForm parent d c2 (snd init)
-         pure $ (\(b, b') ->
-                   do s1 b
-                      s2 b'
-                , do c  <- g1
-                     c' <- g2
-                     pure ((c, c'))
-                )
-    (FormCat f g) ->
-      do (sg,gg) <- renderForm parent d g init
-         c <- gg
-         (sf,gf) <- renderForm parent d f c
-         pure $ (\b -> do sg b
-                          c <- gg
-                          sf c
-                          pure ()
-                , do c <- gg
-                     sf c
-                     gf
-                )
-         {-
-         
---         (s1,g1) <- renderForm parent d f init
-  --       c <- g1
-         
-         pure $ (\b -> do s1 b
-                          c <- g1
-                          s2 c
-                , do g2
-                )
--}
-{-
-    (FormCat f g) ->
-      do (s1,g1) <- renderForm parent d f init
-         c <- g1
-         (s2,g2) <- renderForm parent d g c
-         pure $ (\b -> do s1 b
-                          c <- g1
-                          s2 c
-                , do g2
-                )
--}
-{-
-         pure $ (\x ->
-                   do y <- r2 x
-                      r1 y)
--}
-    FormSpan mClass ->
-      do (Just e) <- createJSElement d "span"
-         setTextContent e init
-         appendChild parent e
-         case mClass of
-           Nothing -> pure ()
-           (Just cls) ->
-             setAttribute e "class" cls
-         pure $ (update (toJSNode e), pure ())
-         where
-           update :: JSNode -> Text -> IO ()
-           update spanNode newText =
-             do putStrLn $ "update span with " ++ show newText
-                setTextContent spanNode newText
-
-    (FormElem nm attrs f) ->
-      do (Just e) <- createJSElement d nm
-         mapM_ (\(a,v) -> setAttribute e a v) attrs
-         r <- renderForm (toJSNode e) d f init
-         appendChild parent e
-         pure r
-
-    (FormElemAttrs nm attrsFn f) ->
-      do (Just e) <- createJSElement d nm
-         -- mapM_ (\(a,v) -> setAttribute e a v) attrs
-         (s, g) <- renderForm (toJSNode e) d f init
-         appendChild parent e
-         pure (\x -> do s x
-                        mapM_ (\(a,v) -> setAttribute e a v) (attrsFn x)
-              , g
-              )
-
-    (FormErrorRight a er) ->
-      do let (Right v) = init
-         (s1, g1) <- renderForm parent d a v
-         (s2, g2) <- renderForm parent d er ValidationNone
-         pure (\x ->
-                 case x of
-                   (Left v) -> s2 v
-                   (Right c) -> s1 c
-              , do x <- g1
-                   g2
-                   pure x
-              )
-
-{-  This would be nice -- but the init value is Either c c' and we would need (c, c') to init this
-    (FormChoice f g) ->
-      do (s1, g1) <- renderForm parent d f undefined
-         (s2, g2) <- renderForm parent d g undefined
-         pure $ undefined
--}
-
-    (FormValidator validator frm) ->
-      do (s, g) <- renderForm parent d frm (Right init)
-         let g' = do c <- g
-                     v <- validator c
-                     case v of
-                       (ValidationSuccess _ d) ->
-                         do s (Left ValidationNone)
-                            pure $ Just d
-                       (ValidationFailure er)  ->
-                         do s (Left er)
-                            pure Nothing
-         pure (\x -> s (Right x), g')
 
     _ -> error $ "renderForm: not implemented - " ++ show frm
--}
-{-
-renderForm :: JSNode -> JSDocument -> FormArrow b c -> IO (b -> IO c)
-renderForm parent d frm =
-  case frm of
-    (FormFun f) -> pure $ (\a -> pure $ f a)
-
-    (FormSplit c1 c2) ->
-      do r1 <- renderForm parent d c1
-         r2 <- renderForm parent d c2
-         pure $ (\(b, b') ->
-                   do c <- r1 b
-                      c' <- r2 b'
-                      pure (c, c'))
-
-    (FormElem nm attrs f) ->
-      do (Just e) <- createJSElement d nm
-         mapM_ (\(a,v) -> setAttribute e a v) attrs
-         r <- renderForm (toJSNode e) d f
-         appendChild parent e
-         pure r
-
-    FormSpan mClass ->
-      do (Just e) <- createJSElement d "span"
-         appendChild parent e
-         case mClass of
-           Nothing -> pure ()
-           (Just cls) ->
-             setAttribute e "class" cls
-         pure $ update (toJSNode e)
-         where
-           update :: JSNode -> Text -> IO ()
-           update spanNode newText =
-             do putStrLn $ "update span with " ++ show newText
-                setTextContent spanNode newText
-
-    (FormInput it required) ->
-      do (Just e) <- createJSElement d "input"
-         setAttribute e "type" (inputType it)
-         when required $ setAttribute e "required" ""
-         appendChild parent e
-         pure $ (\() -> pure ())
-
-    (FormTextArea required) ->
-      do (Just e) <- createJSElement d "textarea"
-         when required $ setAttribute e "required" ""
-         appendChild parent e
-         pure $ (\() -> pure ())
-
-    (FormLabel mClass labelTxt frm) ->
-      do (Just lblE) <- createJSElement d "label"
-         (Just txtNode) <- createJSTextNode d labelTxt
-         case mClass of
-           Nothing -> pure ()
-           (Just cls) -> setAttribute lblE "class" cls
-         appendChild lblE txtNode
-         appendChild parent lblE
-
-         renderForm parent d frm
-
-    (FormCat b a) ->
-      do r2 <- renderForm parent d a
-         r1 <- renderForm parent d b
-         pure $ (\x ->
-                   do y <- r2 x
-                      r1 y)
--}
-{-
-
--}
-{-
-renderForm f =
-  [domc|
-      <form>
-       <f-mk-ctrls></f-mk-ctrls>
-      </form>
-      |]
-    where
-      mkCtrls :: JSDocument -> IO (JSNode, FormArrow () () -> IO ())
-      mkCtrls =
-        [domc|
-             <input type='text' required>
-             |]
---    :: FormArrow b c -> JSDocument -> (JSNode, Model -> IO ())
--}
 
 div_ :: Text -> FormArrow b c -> FormArrow b c
 div_ cls frm = FormElem "div" [("class", cls)] frm
 
 fieldset_ cls frm = FormElem "fieldset" [("class",cls)] frm
-{-
-newAgreementForm :: FormArrow Text Text
-newAgreementForm =
-  div_ "form-horizontal" $
-   fieldset_ "reform" $
-    FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
-            (FormCat (div_ "control-group" $
-                       (FormLabel (Just "control-label") "Update Note" $ div_ "controls" $ FormInput InputText True))
-                     (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
-            )
--}
-
 
 data ValidationStatus a
   = ValidationFailure ValidationError
@@ -585,7 +288,7 @@ maybeMaybe = FormFun $
 -- eitherMerge :: (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text)) -> Either (ValidationStatus sa) (Maybe Text, Maybe Text)
 -- eitherMerge = undefined
 
-eitherSplit :: FormArrow (Either (ValidationStatus s) (Maybe Text, Maybe Text)) (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text))
+eitherSplit :: FormArrow (Either (ValidationStatus s) (c, d)) (Either (ValidationStatus s) c, Either (ValidationStatus s) d)
 eitherSplit = FormFun $
   \e ->
     case e of

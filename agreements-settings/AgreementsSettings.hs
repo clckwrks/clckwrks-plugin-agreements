@@ -22,8 +22,8 @@ import Control.Monad.Trans (MonadIO(liftIO))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, modifyTVar', readTVar, writeTVar)
 import Control.Concurrent.STM (atomically)
-import Chili.FormArrow 
-import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation)
+import Chili.FormArrow
+import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation, createJSTextNode, createJSElement)
 import qualified Data.ByteString.Char8 as BS
 import Data.Char (toUpper)
 import qualified Data.JSString as JS
@@ -300,13 +300,13 @@ Do we really need to distinguish between local and remote? If we allow IO in the
 -}
 
 
-simpleForm1 :: FormArrow () (Text, Text)
+simpleForm1 :: FormArrow (Text, Text) (Text, Text)
 simpleForm1 =
-  proc () ->
-    do a <- FormInput InputText False -< Nothing
-       b <- FormInput InputText False -< Nothing
+  proc (t1,t2) ->
+    do a <- FormInput InputText False -< t1
+       b <- FormInput InputText False -< t2
        returnA -< (a, b)
-
+{-
 -- simpleForm :: FormArrow () Text
 simpleForm2 = FormValidator nonEmptyTextV $ FormErrorRight (FormInput InputText False) errorSpan
 
@@ -340,28 +340,41 @@ simpleForm6 =
             (FormValidator nonEmptyTextV $ controlGroup $ label "two" >>> FormErrorRight (FormInput InputText False) errorSpan) -< (txt1, txt2)
        div_ "controls" $ FormInput InputSubmit False -< Nothing
        returnA -< r
-
+-}
 simpleForm7 =
   div_ "form-horizontal" $
    fieldset_ "reform" $
     proc (txt1, txt2) ->
       do r <- FormValidator (nonEmptyTextV <<< equalTextV "passwords must match") $ merged -< (txt1, txt2)
-         div_ "controls" $ FormInput InputSubmit False -< Nothing
+         div_ "controls" $ FormInput InputSubmit False -< "Submit"
          returnA -< r
            where
-             one :: FormArrow (Either (ValidationStatus s0) (Maybe Text)) (Maybe Text)
+             one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
              one = controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan)
 
-             two :: FormArrow (Either (ValidationStatus s0) (Maybe Text)) (Maybe Text)
+             two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
              two = controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan)
 
-             combined :: FormArrow (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text)) (Maybe Text, Maybe Text)
+             combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
              combined = one *** two
 
-             merged' :: FormArrow (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) (Maybe Text))  (Maybe (Text, Text))
-             merged' = combined >>> maybeMaybe
+--             merged' :: FormArrow (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) ( Text))  (Maybe (Text, Text))
+--             merged' = combined >>> maybeMaybe
 
              merged = eitherSplit >>> combined >>> maybeMaybe
+
+
+{-
+newAgreementForm :: FormArrow Text Text
+newAgreementForm =
+  div_ "form-horizontal" $
+   fieldset_ "reform" $
+    FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
+            (FormCat (div_ "control-group" $
+                       (FormLabel (Just "control-label") "Update Note" $ div_ "controls" $ FormInput InputText True))
+                     (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
+            )
+-}
 
 -- instance Category (
 
@@ -410,14 +423,21 @@ newAgreementTemplate d = mkCtls d simpleForm7
       do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
          print $ frm
          getter <- renderForm formN d frm -- ("Init Text 1", "Init Text 2")
+         getter (SetValue, ("hello", "world"))
 
-         getter (Just "hello", Just "world")
+         (Just div) <- createJSElement d "div"
+         (Just tn)  <- createJSTextNode d ""
+         appendChild div tn
+         appendChild formN div
+
          addEventListener formN (ev @Submit) (\e ->
                       do preventDefault e
                          stopPropagation e
                          putStrLn "Submit handler"
-                         mVal <- getter (Nothing, Nothing)
-                         putStrLn $ "mVal = " ++ show mVal) False
+                         mVal <- getter (Validate, ("", ""))
+                         putStrLn $ "mVal = " ++ show mVal
+                         setTextContent div $ Text.pack $ show mVal
+                                             ) False
 
          pure (formN, \_ -> pure (), getter)
 
