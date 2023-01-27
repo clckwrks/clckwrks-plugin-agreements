@@ -1,0 +1,5 @@
+*~
+.git
+.cabal-sandbox
+.ghc.environment.*
+dist-newstyle

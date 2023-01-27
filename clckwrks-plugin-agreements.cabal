@@ -1,0 +1,98 @@
+cabal-version:       2.4
+name:                clckwrks-plugin-agreements
+version:             0.1.0
+synopsis:            A plugin for Terms & Agreements, Privacy Policies, etc.
+description:         Keep track of your sites legal documents and which users have agreed to the terms
+homepage:            http://www.clckwrks.com/
+license:             BSD-3-Clause
+license-file:        LICENSE
+copyright:           2023 Jeremy Shaw, SeeReason Partners LLC
+author:              Jeremy Shaw
+maintainer:          jeremy@seereason.com
+category:            Clckwrks
+build-type:          Simple
+tested-with:         GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.1, GHC == 8.6.3, GHC == 8.8.3, GHC == 8.10.2
+
+source-repository head
+    type:     git
+    location: git://github.com/clckwrks/clckwrks-plugin-agreements.git
+
+common shared-properties
+   default-language: Haskell2010
+
+common shared-ghcjs-properties
+   default-language: Haskell2010
+   build-depends:    chili
+
+library
+  import: shared-properties
+  build-depends: base
+               , bytestring
+               , cereal
+               , containers
+               , ixset-typed
+               , lens
+               , safecopy
+               , text
+               , time
+               , userid
+               , web-routes
+               , web-routes-th
+
+  if !impl(ghcjs)
+    build-depends: acid-state
+                 , aeson
+                 , clckwrks
+                 , filepath
+                 , happstack-authenticate
+                 , happstack-hsp
+                 , happstack-server
+                 , http-client
+                 , http-client-tls
+                 , http-types
+                 , hsp
+                 , hsx2hs
+                 , mtl
+                 , stm
+                 , unordered-containers
+                 , vector
+                 , web-plugins
+  hs-source-dirs: src
+  if !impl(ghcjs)
+      exposed-modules:
+              Clckwrks.Agreements.API
+              Clckwrks.Agreements.Acid
+              Clckwrks.Agreements.Monad
+              Clckwrks.Agreements.Page.Template
+              Clckwrks.Agreements.Plugin
+              Clckwrks.Agreements.Route
+  exposed-modules:
+                  Clckwrks.Agreements.Types
+                  Clckwrks.Agreements.URL
+
+executable             agreements-settings
+  import:              shared-ghcjs-properties
+  if impl(ghcjs)
+    buildable: True
+  else
+    buildable: False
+  hs-source-dirs:      agreements-settings
+  main-is:             AgreementsSettings.hs
+  build-depends:       base
+                     , bytestring
+                     , cereal
+                     , chili
+                     , clckwrks-plugin-agreements
+                     , http-types
+                     , ghcjs-base
+                     , lens
+                     , mtl
+                     , safecopy
+                     , stm
+                     , reform
+                     , reform-hsp
+                     , text
+                     , time
+                     , userid
+                     , template-haskell
+                     , web-routes
