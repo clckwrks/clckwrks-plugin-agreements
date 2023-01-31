@@ -299,7 +299,7 @@ Do we really need to distinguish between local and remote? If we allow IO in the
 
 -}
 
-
+{-
 simpleForm1 :: FormArrow (Text, Text) (Text, Text)
 simpleForm1 =
   proc (t1,t2) ->
@@ -415,7 +415,7 @@ simpleForm9 =
 --             merged' = combined >>> maybeMaybe
 
              merged = eitherSplit >>> combined >>> maybeMaybe
-
+-}
 frm ++> err =
   FormErrorRight frm err
 
@@ -430,22 +430,22 @@ newAgreementForm =
       pure "" >>>
       FormValidatorOnChange nonEmptyTextV ""
         (controlGroup $ label "Agreement Name" >>>
-          (div_ "controls" $ (FormInput InputText False) ++> errorSpan))
+          (div_ "controls" $ (FormInput InputText [("class","input-xxlarge")] False) ++> errorSpan))
 
     agreementNote =
       pure "" >>>
       FormValidatorOnChange nonEmptyTextV ""
         (controlGroup $ label "Update Note" >>>
-          (div_ "controls" $ (FormInput InputText False) ++> errorSpan))
+          (div_ "controls" $ (FormInput InputText [("class","input-xxlarge")] False) ++> errorSpan))
 
     agreementBody =
       pure "" >>>
       FormValidatorOnChange nonEmptyTextV ""
         (controlGroup $ label "Agreement Contents (en-US)" >>>
-          (div_ "controls" $ (FormTextArea False 2) ++> errorSpan))
+          (div_ "controls" $ (FormTextArea False 20 [("class","input-xxlarge")]) ++> errorSpan))
 
     submitButton =
-      div_ "controls" $ FormInput InputSubmit False <<< pure "Add Agreement"
+      div_ "controls" $ FormInput InputSubmit [] False <<< pure "Add Agreement"
 
 {-
     FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)

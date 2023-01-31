@@ -55,8 +55,8 @@ data FormArrow b c where
   FormElem       :: Text -> [(Text, Text)]                          -> FormArrow b c -> FormArrow b c
   FormElemAttrs  :: Text -> [(Text, Text)] -> (b -> [(Text, Text)]) -> FormArrow b c -> FormArrow b c
   FormLabel      :: Maybe Text -> Text -> FormArrow b c -> FormArrow b c
-  FormInput      :: InputType -> Bool -> FormArrow Text Text
-  FormTextArea   :: Bool -> Int -> FormArrow Text Text
+  FormInput      :: InputType -> [(Text, Text)] -> Bool -> FormArrow Text Text
+  FormTextArea   :: Bool -> Int -> [(Text, Text)] -> FormArrow Text Text
   FormCat        :: FormArrow c d -> FormArrow b c   -> FormArrow b d
   FormSplit      :: FormArrow b c -> FormArrow b' c' -> FormArrow (b, b') (c, c')
   FormSpan       :: Maybe Text -> Text -> FormArrow Text ()
@@ -88,8 +88,8 @@ instance Show (FormArrow b c) where
   show (FormElem nm attrs f) = "FormElem " ++ show nm ++ " " ++ show attrs ++ " (" ++ show f ++ ")"
   show (FormElemAttrs nm attrs attrsFn f) = "FormElemAttrs " ++ show attrs ++ " " ++ show nm ++ " <attrsFn> (" ++ show f ++ ")"
   show (FormLabel mCls txt f) = "FormLabel " ++ show mCls ++ " " ++ show txt ++ " (" ++ show f ++ ")"
-  show (FormInput iType req) = "FormInput " ++ show iType ++ " " ++ show req
-  show (FormTextArea req rows) = "FormTextArea required = " ++ show req ++ " rows = " ++ show rows
+  show (FormInput iType class_ req) = "FormInput iType=" ++ show iType ++ " class=" ++ show class_ ++ " required=" ++ show req
+  show (FormTextArea req rows attrs) = "FormTextArea required = " ++ show req ++ " rows = " ++ show rows
   show (FormCat b a) = "FormCat (" ++ show b ++ ") (" ++ show a ++ ")"
   show (FormSplit b a) = "FormSplit (" ++ show b ++ ") (" ++ show a ++ ")"
   show (FormSpan iText mClass) = "FormSpan " ++ show iText ++ " " ++ show mClass
@@ -322,10 +322,12 @@ renderForm d frm =
                   pure (c, c')
          pure (fn <> gn, validate)
 
-    (FormInput iType required) ->
+    (FormInput iType attrs required) ->
       do (Just e) <- createJSElement d "input"
          setAttribute e "type" (inputType iType)
          when required $ setAttribute e "required" ""
+         mapM_ (\(a,v) -> setAttribute e a v) attrs
+
 --         setValue e init
 
          pure $ ([toJSNode e], \(action, val) ->
@@ -338,10 +340,11 @@ renderForm d frm =
                do setValue e val
                   pure val)
 
-    (FormTextArea required rows) ->
+    (FormTextArea required rows attrs) ->
       do (Just e) <- createJSElement d "textarea"
          when required $ setAttribute e "required" ""
          setAttribute e "rows" (Text.pack $ show rows)
+         mapM_ (\(a,v) -> setAttribute e a v) attrs
 --         setValue e init
 
          pure $ ([toJSNode e], \(action, val) ->
