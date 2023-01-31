@@ -271,7 +271,7 @@ template = [domc|
                </tr>
                |]
 -}
---       <label for="agreements-base-url">Agreements Base URL</label><input id="agreements-base-url" name="{{show UpdateAgreement}}" type="text" placeholder="Base URL" value='{{ maybe "" Text.unpack (agreementsBaseURL model) }}'>  
+--       <label for="agreements-base-url">Agreements Base URL</label><input id="agreements-base-url" name="{{show UpdateAgreement}}" type="text" placeholder="Base URL" value='{{ maybe "" Text.unpack (agreementsBaseURL model) }}'>
 {-
 
 It would be nice to have something like reform which packages forms up into nice validated data types.
@@ -309,14 +309,15 @@ simpleForm1 =
 {-
 -- simpleForm :: FormArrow () Text
 simpleForm2 = FormValidator nonEmptyTextV $ FormErrorRight (FormInput InputText False) errorSpan
-
+-}
+simpleForm3 :: FormArrow (Text, Text) (Maybe Text, Maybe Text)
 simpleForm3 =
   proc (txt1,txt2) ->
-    do x <- FormValidator nonEmptyTextV $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt1
-       y <- FormValidator nonEmptyTextV $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt2
-       FormInput InputSubmit False -< Nothing
+    do x <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt1
+       y <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt2
+       FormInput InputSubmit False -< "Submit It"
        returnA -< (x,y)
-
+{-
 simpleForm4 =
   div_ "form-horizontal" $
              fieldset_ "reform" $
@@ -345,7 +346,7 @@ simpleForm7 =
   div_ "form-horizontal" $
    fieldset_ "reform" $
     proc (txt1, txt2) ->
-      do r <- FormValidator (nonEmptyTextV <<< equalTextV "passwords must match") $ merged -< (txt1, txt2)
+      do r <- FormValidatorOnChange (nonEmptyTextV <<< equalTextV "passwords must match") ("","") $ merged -< (txt1, txt2)
          div_ "controls" $ FormInput InputSubmit False -< "Submit"
          returnA -< r
            where
@@ -363,19 +364,97 @@ simpleForm7 =
 
              merged = eitherSplit >>> combined >>> maybeMaybe
 
+simpleForm8 =
+  div_ "form-horizontal" $
+   fieldset_ "reform" $
+    proc (txt1, txt2) ->
+      do r <- FormValidatorOnChange (equalTextV "passwords must match") ("","") $ merged  -< (txt1, txt2)
+         div_ "controls" $ FormInput InputSubmit False -< "Submit"
+         returnA -< r
+           where
+--              one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
+--             one :: FormArrow Text (Maybe Text)
+             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
 
-{-
-newAgreementForm :: FormArrow Text Text
+--              two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
+--             two :: FormArrow Text (Maybe Text)
+             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+
+--             combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
+             combined = one *** two
+
+--             merged' :: FormArrow (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) ( Text))  (Maybe (Text, Text))
+--             merged' = combined >>> maybeMaybe
+
+             merged = eitherSplit >>> combined >>> maybeMaybe
+
+
+simpleForm9 :: FormArrow (Text, Text, ListAction Text) (Maybe Text, [Text])
+simpleForm9 =
+  div_ "form-horizontal" $
+   fieldset_ "reform" $
+    proc (txt1, txt2, items) ->
+      do r <- FormValidatorOnChange (equalTextV "passwords must match") ("","") $ merged  -< (txt1, txt2)
+         rs <- FormList "div" (div_ "control" $ FormInput InputText False <<< arr (\mt -> (fromMaybe "" mt))) -< items
+         _  <- FormOnClick "foo" (FormInput InputSubmit False) >>> FormInput InputText False -< "press me"
+         div_ "controls" $ FormInput InputSubmit False -< "Submit"
+         returnA -< (r, rs)
+           where
+--              one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
+--             one :: FormArrow Text (Maybe Text)
+             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+
+--              two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
+--             two :: FormArrow Text (Maybe Text)
+             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+
+--             combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
+             combined = one *** two
+
+--             merged' :: FormArrow (Either (ValidationStatus s) (Maybe Text), Either (ValidationStatus s) ( Text))  (Maybe (Text, Text))
+--             merged' = combined >>> maybeMaybe
+
+             merged = eitherSplit >>> combined >>> maybeMaybe
+
+frm ++> err =
+  FormErrorRight frm err
+
+newAgreementForm :: FormArrow () (Maybe Text, Maybe Text, Maybe Text)
 newAgreementForm =
   div_ "form-horizontal" $
    fieldset_ "reform" $
+    (,,) <$> agreementName <*> agreementNote <*> agreementBody <* submitButton
+  where
+    agreementName :: FormArrow () (Maybe Text)
+    agreementName =
+      pure "" >>>
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Agreement Name" >>>
+          (div_ "controls" $ (FormInput InputText False) ++> errorSpan))
+
+    agreementNote =
+      pure "" >>>
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Update Note" >>>
+          (div_ "controls" $ (FormInput InputText False) ++> errorSpan))
+
+    agreementBody =
+      pure "" >>>
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Agreement Contents (en-US)" >>>
+          (div_ "controls" $ (FormTextArea False 2) ++> errorSpan))
+
+    submitButton =
+      div_ "controls" $ FormInput InputSubmit False <<< pure "Add Agreement"
+
+{-
     FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
             (FormCat (div_ "control-group" $
                        (FormLabel (Just "control-label") "Update Note" $ div_ "controls" $ FormInput InputText True))
                      (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
             )
--}
 
+-}
 -- instance Category (
 
 
@@ -403,13 +482,13 @@ newAgreementForm =
 {-
     FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
             (FormCat (div_ "control-group" $
-                       
+
                      (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
             )
 -}
 -}
 -- newAgreementTemplate :: JSDocument -> IO (JSNode, Model -> IO (), IO Text)
-newAgreementTemplate d = mkCtls d simpleForm7
+newAgreementTemplate d = mkCtls d newAgreementForm
   {- [domc|
   <div id="agreements-settings">
    <form>
@@ -422,8 +501,10 @@ newAgreementTemplate d = mkCtls d simpleForm7
     mkCtls d frm =
       do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
          print $ frm
-         getter <- renderForm formN d frm -- ("Init Text 1", "Init Text 2")
-         getter (SetValue, ("hello", "world"))
+         (nodes, getter) <- renderForm d frm -- ("Init Text 1", "Init Text 2")
+         mapM_ (appendChild formN) nodes
+         getter (SetValue, ())
+--         getter (SetValue, ("", "", ListAppend ["4", "5", "6"]))
 
          (Just div) <- createJSElement d "div"
          (Just tn)  <- createJSTextNode d ""
@@ -434,10 +515,9 @@ newAgreementTemplate d = mkCtls d simpleForm7
                       do preventDefault e
                          stopPropagation e
                          putStrLn "Submit handler"
-                         mVal <- getter (Validate, ("", ""))
+                         mVal <- getter (Validate, ())
                          putStrLn $ "mVal = " ++ show mVal
                          setTextContent div $ Text.pack $ show mVal
                                              ) False
 
          pure (formN, \_ -> pure (), getter)
-
