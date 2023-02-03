@@ -84,6 +84,7 @@ executable             agreements-settings
                      , cereal
                      , chili
                      , clckwrks-plugin-agreements
+                     , containers
                      , http-types
                      , ghcjs-base
                      , lens

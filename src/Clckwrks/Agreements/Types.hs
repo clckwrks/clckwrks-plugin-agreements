@@ -128,7 +128,6 @@ revisionDate f agreement = fmap (\utc -> agreement { _agreementMeta = (_agreemen
 revisionAuthor :: Lens' Agreement UserId
 revisionAuthor f agreement = fmap (\uid -> agreement { _agreementMeta = (_agreementMeta agreement) { _amRevisionAuthor = uid } } ) (f (_amRevisionAuthor $ _agreementMeta agreement))
 
-
 type AgreementRevision = (AgreementId, RevisionId)
 
 agreementRevision :: Getter Agreement (AgreementId, RevisionId)

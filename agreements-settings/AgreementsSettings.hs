@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# language QuasiQuotes, TemplateHaskell #-}
 {-# language OverloadedStrings #-}
@@ -16,22 +17,26 @@ module Main where
 import Control.Arrow        (Arrow(arr,first, second, (&&&), (***)), ArrowChoice((+++)), (<<<), (>>>),  returnA)
 import Control.Category     (Category(id,(.)))
 import Control.Monad        ((<=<), when)
-import Clckwrks.Agreements.Types (AgreementId(..), AgreementMeta(..), AgreementsSettings(..), RevisionId(..))
-import Clckwrks.Agreements.URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..))
+import Clckwrks.Agreements.Types (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementsSettings(..), RevisionId(..), agreementName, revisionNote, revisionBody)
+import Clckwrks.Agreements.URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..))
+import Control.Lens ((^.))
 import Control.Monad.Trans (MonadIO(liftIO))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, modifyTVar', readTVar, writeTVar)
 import Control.Concurrent.STM (atomically)
 import Chili.FormArrow
-import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation, createJSTextNode, createJSElement)
+import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getData, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeName, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation, createJSTextNode, createJSElement)
 import qualified Data.ByteString.Char8 as BS
 import Data.Char (toUpper)
 import qualified Data.JSString as JS
 import Data.JSString.Text (textToJSString, textFromJSString)
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, fromJust)
+import Data.Proxy (Proxy(..))
 import Data.SafeCopy (SafeCopy, safeGet, safePut)
 import Data.Serialize (runGet, runPut)
-import Data.Time.Clock (UTCTime, getCurrentTime)
+import Data.Time.Clock (UTCTime(..), getCurrentTime, secondsToDiffTime)
+import Data.Time.Calendar.OrdinalDate (fromOrdinalDate)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -48,6 +53,9 @@ import System.IO (hFlush, stdout, hGetBuffering, hSetBuffering, BufferMode(..))
 import Text.Read (readMaybe)
 import Web.Routes
 
+
+-- * Debug stuff
+
 debugStrLn :: String -> IO ()
 debugStr :: String -> IO ()
 debugPrint :: (Show a) => a -> IO ()
@@ -61,8 +69,6 @@ debugStrLn = const $ pure ()
 debugStr   = const $ pure ()
 debugPrint = const $ pure ()
 #endif
-
-type Lang = Text
 
 showNode :: (IsJSNode n, MonadIO m) => n -> m String
 showNode n' = liftIO $
@@ -83,6 +89,10 @@ printNodeList :: JSNodeList -> IO ()
 printNodeList nl =
   do l <- getLength nl
      mapM_ (\c -> do (Just n) <- item nl c ; printNode n) [0..(l - 1)]
+
+-- * Model
+
+type Lang = Text
 
 data Model = Model
   { clckwrksBaseURL    :: Text
@@ -106,11 +116,25 @@ initModel now = Model
                          ]
   }
 
+dummyAgreement :: Agreement
+dummyAgreement =
+  Agreement { _agreementMeta = AgreementMeta { _amAgreementId    = AgreementId 1
+                                             , _amAgreementName  = "sample agreement"
+                                             , _amRevisionId     = RevisionId 1
+                                             , _amRevisionDate   = UTCTime (fromOrdinalDate 2023 31) (secondsToDiffTime 0) 
+                                             , _amRevisionNote   = "This is just a test"
+                                             , _amRevisionAuthor = UserId 1
+                                             }
+            , _revisionBody = Map.singleton "en_US" "This is an agreement. I hope you agree."
+            }
+
 data FieldName
   = UpdateAgreement
   deriving (Eq, Ord, Read, Show)
 
-remote :: (Show req, Show res, SafeCopy req, SafeCopy res) => TVar Model -> StdMethod -> AgreementsAdminApiURL -> Maybe req -> (res -> IO ()) -> IO ()
+
+-- * Query the server
+remote :: (Show (RequestData url), Show (ResponseData url), SafeCopy (RequestData url), SafeCopy (ResponseData url), KnownURL url) => TVar Model -> StdMethod -> Proxy (url :: AgreementsAdminApiURL) -> Maybe (RequestData url) -> (ResponseData url -> IO ()) -> IO ()
 remote modelTV method apiUrl mReq callback =
   do xhr <- newXMLHttpRequest
      setResponseType xhr "arraybuffer"
@@ -137,7 +161,7 @@ remote modelTV method apiUrl mReq callback =
                 _ -> pure ()
      addEventListener xhr (ev @ReadyStateChange) settingsHandler False
      cbu <- clckwrksBaseURL <$> (atomically $ readTVar modelTV)
-     let url = cbu  <> toPathInfo (AgreementsAdmin (AgreementsAdminApi apiUrl))
+     let url = cbu  <> toPathInfo (AgreementsAdmin (AgreementsAdminApi (knownURL apiUrl)))
      print url
      open xhr (Text.decodeLatin1 (renderStdMethod method)) url True
      case mReq of
@@ -163,24 +187,14 @@ main =
   do hSetBuffering stdout LineBuffering
      (Just d) <- currentDocument
 ---     (newNode, update) <- template d
-     (newNode, update, getter) <- newAgreementTemplate d
      me <- getElementById d "pagelet-div"
      case me of
        Nothing -> pure ()
        (Just rootNode) ->
-         do mp <- parentNode rootNode
-            case mp of
-              Nothing -> pure ()
-              (Just p) ->
-                do -- attach pagelet
-                   replaceChild p newNode rootNode
-
-                   -- init the model and update view
-                   -- we do the update here so that we do not see the mustache syntax while waiting for getList to return
-                   now <- getCurrentTime
-                   modelTV <- newTVarIO (initModel now)
-                   update =<< (atomically $ readTVar modelTV)
-
+         do -- agreementList rootNode
+            newAgreement rootNode
+--                do agreementList p rootNode
+                   -- attach pagelet
                    -- add event handlers
 --                   addEventListener newNode (ev @Change) (changeHandler update modelTV) False
 {-
@@ -210,8 +224,8 @@ main =
                                                                         update =<< (atomically $ readTVar modelTV)
                                                                  )
                     -}
-                   putStrLn "init done."
-                   pure ()
+            putStrLn "init done."
+            pure ()
 
 changeHandler :: (Model -> IO ()) -> TVar Model -> EventObject Change -> IO ()
 changeHandler update modelTV e =
@@ -237,11 +251,92 @@ changeHandler update modelTV e =
                 remote modelTV POST SetAgreements agreements  (\() -> putStrLn "sent ok")
 -}
            _ -> debugStrLn $  "could not find or parse name. mName = " ++ show mName
-{-
-template :: JSDocument -> IO (JSNode, Model -> IO ())
-template = [domc|
+
+
+viewAgreement :: JSNode -> AgreementId -> IO ()
+viewAgreement rootNode aid =
+  do putStrLn $ "viewAgreement"
+     (Just d) <- currentDocument
+     mp <- parentNode rootNode
+     case mp of
+       Nothing -> pure ()
+       (Just p) ->
+         do (newNode, update) <- viewAgreementTemplate d
+            update dummyAgreement
+            replaceChild p newNode rootNode
+
+            pure ()
+
+agreementList :: JSElement -> IO ()
+agreementList rootNode =
+  do (Just d) <- currentDocument
+     mp <- parentNode rootNode
+     case mp of
+       Nothing -> pure ()
+       (Just p) ->
+         do (newNode, update) <- agreementListTemplate d
+            replaceChild p newNode rootNode
+
+            -- init the model and update view
+            -- we do the update here so that we do not see the mustache syntax while waiting for getList to return
+            now <- getCurrentTime
+            modelTV <- newTVarIO (initModel now)
+            update =<< (atomically $ readTVar modelTV)
+
+            remote modelTV GET (Proxy :: Proxy 'GetLatestAgreementsMeta) Nothing $ \latestMeta ->
+              do print latestMeta
+
+            addEventListener newNode (ev @Click) (\event ->
+                     do putStrLn "Click"
+                        case fromEventTarget @JSNode (target event) of
+                          Nothing -> putStrLn "could not find event target"
+                          (Just n) ->
+                            do mAid <- findAgreementId n
+                               putStrLn $ "aid = " ++ show mAid
+                               case mAid of
+                                 Nothing -> pure ()
+                                 (Just aid) ->
+                                   viewAgreement newNode aid
+                               pure ()) False
+
+findAgreementId :: JSNode -> IO (Maybe AgreementId)
+findAgreementId n =
+  do nn <- nodeName n
+     case nn of
+       "TR" ->
+         do mid <- getData n "agreementId"
+            putStrLn $ "agreementId = " ++ show mid
+            case mid of
+              Nothing -> pure Nothing
+              (Just s) ->
+                pure (AgreementId <$> readMaybe (JS.unpack s))
+       "TBODY" -> pure Nothing
+       "TABLE" -> pure Nothing
+       _ ->
+         do mp <- parentNode n
+            case mp of
+              Nothing -> pure Nothing
+              (Just e) -> findAgreementId (toJSNode e)
+
+viewAgreementTemplate :: JSDocument -> IO (JSNode, Agreement -> IO ())
+viewAgreementTemplate =
+  [domc|
+       <div id="view-agreement">
+        <dl>
+         <dt>Agreement Name</dt>
+         <dd>{{ Text.unpack $ model ^. agreementName }}</dd>
+         <dt>Agreement Note</dt>
+         <dd>{{ Text.unpack $ model ^. revisionNote }}</dd>
+         <dt>Agreement Body</dt>
+         <dd>{{ show $ model ^. revisionBody }}</dd>
+        </dl>
+       </div>
+       |]
+
+agreementListTemplate :: JSDocument -> IO (JSNode, Model -> IO ())
+agreementListTemplate = [domc|
   <div id="agreements-settings">
-      <table>
+      <table class="table table-striped table-hover">
        <thead>
         <tr>
          <th>Id</th>
@@ -253,15 +348,15 @@ template = [domc|
         </tr>
        </thead>
        <tbody>
-        <f-agreement-list d-map="agreementsMeta model"></f-agreement-list>
+        <f-agreement-list-item d-map="agreementsMeta model"></f-agreement-list-item>
        </tbody>
       </table>
   </div>
   |]
-  where agreementList :: JSDocument -> IO (JSNode, AgreementMeta -> IO ())
-        agreementList =
-          [domc|
-               <tr>
+  where agreementListItem :: JSDocument -> IO (JSNode, AgreementMeta -> IO ())
+        agreementListItem d =
+          do (row, update) <- [domc|
+               <tr data-agreement-id="{{show $ _unAgreementId $ _amAgreementId model}}">
                  <td>{{ show $ _unAgreementId $ _amAgreementId model }}</td>
                  <td>{{ show $ _unRevisionId $ _amRevisionId model }}</td>
                  <td>{{ Text.unpack $ _amAgreementName model }}</td>
@@ -269,8 +364,9 @@ template = [domc|
                  <td>{{ show $ _unUserId $ _amRevisionAuthor model }}</td>
                  <td>{{ Text.unpack $ _amRevisionNote model }}</td>
                </tr>
-               |]
--}
+               |] d
+             pure (row, update)
+
 --       <label for="agreements-base-url">Agreements Base URL</label><input id="agreements-base-url" name="{{show UpdateAgreement}}" type="text" placeholder="Base URL" value='{{ maybe "" Text.unpack (agreementsBaseURL model) }}'>
 {-
 
@@ -299,13 +395,14 @@ Do we really need to distinguish between local and remote? If we allow IO in the
 
 -}
 
-{-
+
 simpleForm1 :: FormArrow (Text, Text) (Text, Text)
 simpleForm1 =
   proc (t1,t2) ->
-    do a <- FormInput InputText False -< t1
-       b <- FormInput InputText False -< t2
+    do a <- FormInput InputText [] False -< t1
+       b <- FormInput InputText [] False -< t2
        returnA -< (a, b)
+
 {-
 -- simpleForm :: FormArrow () Text
 simpleForm2 = FormValidator nonEmptyTextV $ FormErrorRight (FormInput InputText False) errorSpan
@@ -313,48 +410,52 @@ simpleForm2 = FormValidator nonEmptyTextV $ FormErrorRight (FormInput InputText 
 simpleForm3 :: FormArrow (Text, Text) (Maybe Text, Maybe Text)
 simpleForm3 =
   proc (txt1,txt2) ->
-    do x <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt1
-       y <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText False) errorSpan -< txt2
-       FormInput InputSubmit False -< "Submit It"
+    do x <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText [] False) errorSpan -< txt1
+       y <- FormValidatorOnChange nonEmptyTextV "" $ controlGroup $ FormErrorRight (FormInput InputText [] False) errorSpan -< txt2
+       FormInput InputSubmit [] False -< "Submit It"
        returnA -< (x,y)
+
 {-
 simpleForm4 =
   div_ "form-horizontal" $
              fieldset_ "reform" $
   proc (txt1,txt2) ->
     do x <- FormValidator (nonEmptyTextV . (equalTextV "password must match")) $ maybeMaybe <<<
-               (((controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))) &&&
-               (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))) -< (Just "foo")
-       div_ "control-group" $ (div_ "controls" $ FormInput InputSubmit False) -< Nothing
+               (((controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))) &&&
+                 (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))) -< (Just "foo")
+       div_ "control-group" $ (div_ "controls" $ FormInput InputSubmit [] False) -< Nothing
        returnA -< x
+-}
+
 
 simpleForm5 =
   proc (txt2) ->
-    do r <- (FormValidator nonEmptyTextV $ controlGroup $ label "one" >>> FormErrorRight (FormInput InputText False) errorSpan) &&&
-            (FormValidator nonEmptyTextV $ controlGroup $ label "two" >>> FormErrorRight (FormInput InputText False) errorSpan) -< txt2
-       FormInput InputSubmit False -< Nothing
+    do r <- (FormValidator nonEmptyTextV $ controlGroup $ label "one" >>> FormErrorRight (FormInput InputText [] False) errorSpan) &&&
+            (FormValidator nonEmptyTextV $ controlGroup $ label "two" >>> FormErrorRight (FormInput InputText [] False) errorSpan) -< txt2
+       FormInput InputSubmit [] False -< "Submit"
        returnA -< r
 
 simpleForm6 =
   proc (txt1, txt2) ->
-    do r <- (FormValidator nonEmptyTextV $ controlGroup $ label "one" >>> FormErrorRight (FormInput InputText False) errorSpan) ***
-            (FormValidator nonEmptyTextV $ controlGroup $ label "two" >>> FormErrorRight (FormInput InputText False) errorSpan) -< (txt1, txt2)
-       div_ "controls" $ FormInput InputSubmit False -< Nothing
+    do r <- (FormValidator nonEmptyTextV $ controlGroup $ label "one" >>> FormErrorRight (FormInput InputText [] False) errorSpan) ***
+            (FormValidator nonEmptyTextV $ controlGroup $ label "two" >>> FormErrorRight (FormInput InputText []False) errorSpan) -< (txt1, txt2)
+       div_ "controls" $ FormInput InputSubmit [] False -< "Submit"
        returnA -< r
--}
+
+
 simpleForm7 =
   div_ "form-horizontal" $
    fieldset_ "reform" $
     proc (txt1, txt2) ->
       do r <- FormValidatorOnChange (nonEmptyTextV <<< equalTextV "passwords must match") ("","") $ merged -< (txt1, txt2)
-         div_ "controls" $ FormInput InputSubmit False -< "Submit"
+         div_ "controls" $ FormInput InputSubmit [] False -< "Submit"
          returnA -< r
            where
              one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
-             one = controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan)
+             one = controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan)
 
              two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
-             two = controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan)
+             two = controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan)
 
              combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
              combined = one *** two
@@ -369,16 +470,16 @@ simpleForm8 =
    fieldset_ "reform" $
     proc (txt1, txt2) ->
       do r <- FormValidatorOnChange (equalTextV "passwords must match") ("","") $ merged  -< (txt1, txt2)
-         div_ "controls" $ FormInput InputSubmit False -< "Submit"
+         div_ "controls" $ FormInput InputSubmit [] False -< "Submit"
          returnA -< r
            where
 --              one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
 --             one :: FormArrow Text (Maybe Text)
-             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))
 
 --              two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
 --             two :: FormArrow Text (Maybe Text)
-             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))
 
 --             combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
              combined = one *** two
@@ -395,18 +496,18 @@ simpleForm9 =
    fieldset_ "reform" $
     proc (txt1, txt2, items) ->
       do r <- FormValidatorOnChange (equalTextV "passwords must match") ("","") $ merged  -< (txt1, txt2)
-         rs <- FormList "div" (div_ "control" $ FormInput InputText False <<< arr (\mt -> (fromMaybe "" mt))) -< items
-         _  <- FormOnClick "foo" (FormInput InputSubmit False) >>> FormInput InputText False -< "press me"
-         div_ "controls" $ FormInput InputSubmit False -< "Submit"
+         rs <- FormList "div" (div_ "control" $ FormInput InputText [] False <<< arr (\mt -> (fromMaybe "" mt))) -< items
+         _  <- FormOnClick "foo" (FormInput InputSubmit [] False) >>> FormInput InputText [] False -< "press me"
+         div_ "controls" $ FormInput InputSubmit [] False -< "Submit"
          returnA -< (r, rs)
            where
 --              one :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
 --             one :: FormArrow Text (Maybe Text)
-             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+             one = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "one" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))
 
 --              two :: FormArrow (Either (ValidationStatus s0) (Text)) (Maybe Text)
 --             two :: FormArrow Text (Maybe Text)
-             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText False) errorSpan))
+             two = FormValidatorOnChange' nonEmptyTextV "" (controlGroup $ label "two" >>> (div_ "controls" $ FormErrorRight (FormInput InputText [] False) errorSpan))
 
 --             combined :: FormArrow (Either (ValidationStatus s) ( Text), Either (ValidationStatus s) ( Text)) (Maybe Text, Maybe Text)
              combined = one *** two
@@ -415,7 +516,7 @@ simpleForm9 =
 --             merged' = combined >>> maybeMaybe
 
              merged = eitherSplit >>> combined >>> maybeMaybe
--}
+
 frm ++> err =
   FormErrorRight frm err
 
@@ -447,48 +548,60 @@ newAgreementForm =
     submitButton =
       div_ "controls" $ FormInput InputSubmit [] False <<< pure "Add Agreement"
 
-{-
-    FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
-            (FormCat (div_ "control-group" $
-                       (FormLabel (Just "control-label") "Update Note" $ div_ "controls" $ FormInput InputText True))
-                     (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
-            )
 
--}
--- instance Category (
+inputText attrs     = FormInput InputText attrs False
+textArea rows attrs = FormTextArea False rows attrs
 
-
-{-
-  proc () ->
-    do a <- FormInput InputText False -< ()
-       b <- FormInput InputText False -< ()
-       returnA -< (a, b)
--}
-{-
-newAgreementForm :: FormArrow Text ()
-newAgreementForm =
+updateAgreementForm :: FormArrow (Text, Text) (Maybe Text, Maybe Text, Maybe Text)
+updateAgreementForm =
   div_ "form-horizontal" $
    fieldset_ "reform" $
-    proc t ->
-      do an <- controlGroup $ FormLabel (Just "control-label") "Agreement Name" $
-                 div_ "controls" $
-                   (proc s ->
-                      do FormInput InputText True -< ()
-                         FormSpan (Just "help-inline") -< s) -< t
-         _  <- div_ "control-group" $ (FormLabel (Just "control-label") "Update Note" $ div_ "controls" $ FormInput InputText True) -< ()
-         _  <- div_ "control-group" $ (FormLabel (Just "control-label") "Agreement (en-US)" $ div_ "controls" $ FormTextArea True) -< ()
-         _  <- div_ "control-group" $ div_ "controls" $ FormInput InputSubmit False -< ()
-         returnA -< ()
-{-
-    FormCat (div_ "control-group" $ FormLabel (Just "control-label") "Agreement" $ div_ "controls" $ FormTextArea True)
-            (FormCat (div_ "control-group" $
+     proc (oldName, oldBody) ->
+       do newName <- agreementName -< oldName
+          newNote <- agreementNote -< ""
+          newBody <- agreementBody -< oldBody
+          submitButton -< ()
+          returnA -< (newName, newNote, newBody)
 
-                     (div_ "control-group" $ FormLabel (Just "control-label") "Agreement Name" $ div_ "controls" $ FormInput InputText True)
-            )
--}
--}
--- newAgreementTemplate :: JSDocument -> IO (JSNode, Model -> IO (), IO Text)
-newAgreementTemplate d = mkCtls d newAgreementForm
+  where
+    agreementName :: FormArrow Text (Maybe Text)
+    agreementName =
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Agreement Name" >>>
+          (div_ "controls" $ inputText [("class","input-xxlarge")] ++> errorSpan))
+
+    agreementNote =
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Update Note" >>>
+          (div_ "controls" $ inputText [("class","input-xxlarge")] ++> errorSpan))
+
+    agreementBody =
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Agreement Contents (en-US)" >>>
+          (div_ "controls" $ textArea 20 [("class","input-xxlarge")] ++> errorSpan))
+
+    submitButton =
+      div_ "controls" $ FormInput InputSubmit [] False <<< pure "Update Agreement"
+
+
+newAgreement :: JSElement -> IO ()
+newAgreement rootNode =
+  do (Just d) <- currentDocument
+     mp <- parentNode rootNode
+     case mp of
+       Nothing -> pure ()
+       (Just p) ->
+         do (newNode, update, getter) <- newAgreementTemplate d
+            replaceChild p newNode rootNode
+
+            -- init the model and update view
+            -- we do the update here so that we do not see the mustache syntax while waiting for getList to return
+            now <- getCurrentTime
+            modelTV <- newTVarIO (initModel now)
+            update =<< (atomically $ readTVar modelTV)
+
+newAgreementTemplate :: JSDocument -> IO (JSNode, Model -> IO (), (FormAction, (Text, Text)) -> IO (Maybe Text, Maybe Text, Maybe Text))
+newAgreementTemplate d = mkCtls d -- updateAgreementForm
   {- [domc|
   <div id="agreements-settings">
    <form>
@@ -498,12 +611,12 @@ newAgreementTemplate d = mkCtls d newAgreementForm
  |] -}
   where
 --     mkCtls :: JSDocument -> IO (JSNode, Model -> IO (), (Text, Text) -> IO (Text, Text))
-    mkCtls d frm =
+    mkCtls d =
       do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
-         print $ frm
-         (nodes, getter) <- renderForm d frm -- ("Init Text 1", "Init Text 2")
+--         print $ frm
+         (nodes, getter) <- renderForm d updateAgreementForm
          mapM_ (appendChild formN) nodes
-         getter (SetValue, ())
+         getter (SetValue, ("",""))
 --         getter (SetValue, ("", "", ListAppend ["4", "5", "6"]))
 
          (Just div) <- createJSElement d "div"
@@ -515,7 +628,7 @@ newAgreementTemplate d = mkCtls d newAgreementForm
                       do preventDefault e
                          stopPropagation e
                          putStrLn "Submit handler"
-                         mVal <- getter (Validate, ())
+                         mVal <- getter (Validate, ("",""))
                          putStrLn $ "mVal = " ++ show mVal
                          setTextContent div $ Text.pack $ show mVal
                                              ) False

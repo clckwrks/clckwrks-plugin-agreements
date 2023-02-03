@@ -35,9 +35,10 @@ import Data.Maybe           (fromJust)
 import Data.SafeCopy        (Migrate(..), base, deriveSafeCopy, extension)
 import Data.String          (fromString)
 import Data.Text            (Text)
-import Data.Time.Clock      (UTCTime)
+import Data.Time.Clock      (UTCTime(..), getCurrentTime, secondsToDiffTime)
+import Data.Time.Calendar.OrdinalDate (fromOrdinalDate)
 import qualified Data.Text  as Text
-import Data.UserId          (UserId)
+import Data.UserId          (UserId(..))
 
 data AgreementsState  = AgreementsState
     { _agreements :: IxAgreements
@@ -46,10 +47,22 @@ data AgreementsState  = AgreementsState
 deriveSafeCopy 1 'base ''AgreementsState
 makeLenses ''AgreementsState
 
+dummyAgreement :: Agreement
+dummyAgreement =
+  Agreement { _agreementMeta = AgreementMeta { _amAgreementId    = AgreementId 1
+                                             , _amAgreementName  = "sample agreement"
+                                             , _amRevisionId     = RevisionId 1
+                                             , _amRevisionDate   = UTCTime (fromOrdinalDate 2023 31) (secondsToDiffTime 0) 
+                                             , _amRevisionNote   = "This is just a test"
+                                             , _amRevisionAuthor = UserId 1
+                                             }
+            , _revisionBody = Map.singleton "en_US" "This is an agreement. I hope you agree."
+            }
+
 initialAgreementsState :: AgreementsState
 initialAgreementsState =
   AgreementsState
-    { _agreements     = IxSet.empty
+    { _agreements     = IxSet.fromList [dummyAgreement]
     }
 
 -- * events

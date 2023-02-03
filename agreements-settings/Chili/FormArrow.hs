@@ -129,6 +129,7 @@ data FormAction
   | Validate
   | GetValue -- does not perform validation
   deriving Show
+
 {-
 renderForm :: JSNode -> JSDocument -> FormArrow b c -> IO ((FormAction, b) -> IO c)
 renderForm parent d frm =
@@ -282,6 +283,8 @@ We can check the first field for being empty when the focus leaves. But we can n
 -- FIXME: instead of returning [JSNode] should we return a Builder/ShowS type thing?
 
 -}
+
+
 renderForm :: forall b c. JSDocument -> FormArrow b c -> IO ([JSNode], (FormAction, b) -> IO c)
 renderForm d frm =
   case frm of
@@ -556,6 +559,7 @@ renderForm d frm =
          pure ([toJSNode e], validate)
 
     _ -> error $ "renderForm: not implemented - " ++ show frm
+
 
 data ValidationStatus a
   = ValidationFailure ValidationError
