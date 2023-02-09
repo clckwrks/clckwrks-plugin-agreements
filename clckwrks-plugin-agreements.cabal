@@ -30,6 +30,7 @@ library
                , bytestring
                , cereal
                , containers
+               , ghc-prim
                , ixset-typed
                , lens
                , safecopy

@@ -17,9 +17,9 @@ module Main where
 import Control.Arrow        (Arrow(arr,first, second, (&&&), (***)), ArrowChoice((+++)), (<<<), (>>>),  returnA)
 import Control.Category     (Category(id,(.)))
 import Control.Monad        ((<=<), when)
-import Clckwrks.Agreements.Types (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementsSettings(..), RevisionId(..), agreementName, revisionNote, revisionBody)
-import Clckwrks.Agreements.URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..))
-import Control.Lens ((^.))
+import Clckwrks.Agreements.Types (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementRevision, AgreementsSettings(..), NewAgreementData(..), RevisionId(..), agreementName, revisionNote, revisionBody)
+import Clckwrks.Agreements.URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..), TaggedURL(..), withURL)
+import Control.Lens ((&), (^.), (.~))
 import Control.Monad.Trans (MonadIO(liftIO))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, modifyTVar', readTVar, writeTVar)
@@ -134,9 +134,11 @@ data FieldName
 
 
 -- * Query the server
-remote :: (Show (RequestData url), Show (ResponseData url), SafeCopy (RequestData url), SafeCopy (ResponseData url), KnownURL url) => TVar Model -> StdMethod -> Proxy (url :: AgreementsAdminApiURL) -> Maybe (RequestData url) -> (ResponseData url -> IO ()) -> IO ()
-remote modelTV method apiUrl mReq callback =
+remote :: (Show (RequestData url), Show (ResponseData url), SafeCopy (RequestData url), SafeCopy (ResponseData url), WithURL url) => TVar Model -> StdMethod -> TaggedURL url AgreementsAdminApiURL -> Maybe (RequestData url) -> (ResponseData url -> IO ()) -> IO ()
+remote modelTV method (TaggedURL apiUrl) mReq callback =
   do xhr <- newXMLHttpRequest
+--     let f = apiUrl
+--     print f
      setResponseType xhr "arraybuffer"
      let settingsHandler ev =
            do putStrLn "settingsHandler - readystatechange"
@@ -161,8 +163,8 @@ remote modelTV method apiUrl mReq callback =
                 _ -> pure ()
      addEventListener xhr (ev @ReadyStateChange) settingsHandler False
      cbu <- clckwrksBaseURL <$> (atomically $ readTVar modelTV)
-     let url = cbu  <> toPathInfo (AgreementsAdmin (AgreementsAdminApi (knownURL apiUrl)))
-     print url
+     let url = cbu  <> toPathInfo (AgreementsAdmin (AgreementsAdminApi apiUrl))
+     -- print url
      open xhr (Text.decodeLatin1 (renderStdMethod method)) url True
      case mReq of
        Nothing    -> send xhr
@@ -191,8 +193,12 @@ main =
      case me of
        Nothing -> pure ()
        (Just rootNode) ->
-         do -- agreementList rootNode
-            newAgreement rootNode
+         do -- init the model
+            now <- getCurrentTime
+            modelTV <- newTVarIO (initModel now)
+--            update =<< (atomically $ readTVar modelTV)
+
+            agreementList modelTV rootNode
 --                do agreementList p rootNode
                    -- attach pagelet
                    -- add event handlers
@@ -253,8 +259,8 @@ changeHandler update modelTV e =
            _ -> debugStrLn $  "could not find or parse name. mName = " ++ show mName
 
 
-viewAgreement :: JSNode -> AgreementId -> IO ()
-viewAgreement rootNode aid =
+viewAgreement :: TVar Model -> JSNode -> AgreementId -> Maybe RevisionId -> IO ()
+viewAgreement modelTV rootNode aid mrid =
   do putStrLn $ "viewAgreement"
      (Just d) <- currentDocument
      mp <- parentNode rootNode
@@ -262,13 +268,26 @@ viewAgreement rootNode aid =
        Nothing -> pure ()
        (Just p) ->
          do (newNode, update) <- viewAgreementTemplate d
-            update dummyAgreement
+
             replaceChild p newNode rootNode
+
+            remote modelTV GET (withURL @GetAgreement aid) Nothing $ \agreement ->
+              do print agreement
+                 update agreement
+                 {-
+                 m' <- atomically $
+                        do m0 <- readTVar modelTV
+                           let m1 = m0 { agreementsMeta = latestMeta }
+                           writeTVar modelTV m1
+                           pure $ m1
+                 update m'
+                 -}
+
 
             pure ()
 
-agreementList :: JSElement -> IO ()
-agreementList rootNode =
+agreementList :: TVar Model -> JSElement -> IO ()
+agreementList modelTV rootNode =
   do (Just d) <- currentDocument
      mp <- parentNode rootNode
      case mp of
@@ -277,14 +296,14 @@ agreementList rootNode =
          do (newNode, update) <- agreementListTemplate d
             replaceChild p newNode rootNode
 
-            -- init the model and update view
-            -- we do the update here so that we do not see the mustache syntax while waiting for getList to return
-            now <- getCurrentTime
-            modelTV <- newTVarIO (initModel now)
-            update =<< (atomically $ readTVar modelTV)
-
-            remote modelTV GET (Proxy :: Proxy 'GetLatestAgreementsMeta) Nothing $ \latestMeta ->
+            remote modelTV GET (withURL @GetLatestAgreementsMeta) Nothing $ \latestMeta ->
               do print latestMeta
+                 m' <- atomically $
+                        do m0 <- readTVar modelTV
+                           let m1 = m0 { agreementsMeta = latestMeta }
+                           writeTVar modelTV m1
+                           pure $ m1
+                 update m'
 
             addEventListener newNode (ev @Click) (\event ->
                      do putStrLn "Click"
@@ -296,7 +315,7 @@ agreementList rootNode =
                                case mAid of
                                  Nothing -> pure ()
                                  (Just aid) ->
-                                   viewAgreement newNode aid
+                                   viewAgreement modelTV newNode aid Nothing
                                pure ()) False
 
 findAgreementId :: JSNode -> IO (Maybe AgreementId)
@@ -550,6 +569,7 @@ newAgreementForm =
 
 
 inputText attrs     = FormInput InputText attrs False
+inputSubmit attrs     = FormInput InputSubmit attrs False
 textArea rows attrs = FormTextArea False rows attrs
 
 updateAgreementForm :: FormArrow (Text, Text) (Maybe Text, Maybe Text, Maybe Text)
@@ -562,7 +582,6 @@ updateAgreementForm =
           newBody <- agreementBody -< oldBody
           submitButton -< ()
           returnA -< (newName, newNote, newBody)
-
   where
     agreementName :: FormArrow Text (Maybe Text)
     agreementName =
@@ -581,50 +600,58 @@ updateAgreementForm =
           (div_ "controls" $ textArea 20 [("class","input-xxlarge")] ++> errorSpan))
 
     submitButton =
-      div_ "controls" $ FormInput InputSubmit [] False <<< pure "Update Agreement"
+      div_ "controls" $ inputSubmit [] <<< pure "Update Agreement"
 
 
-newAgreement :: JSElement -> IO ()
-newAgreement rootNode =
+newAgreement :: TVar Model -> JSElement -> IO ()
+newAgreement modelTV rootNode =
   do (Just d) <- currentDocument
      mp <- parentNode rootNode
      case mp of
        Nothing -> pure ()
        (Just p) ->
-         do (newNode, update, getter) <- newAgreementTemplate d
-            replaceChild p newNode rootNode
+         do -- (newNode, update, getter) <- newAgreementTemplate d
+            (formN, ctrl) <- createForm d newAgreementForm ()
+            replaceChild p formN rootNode
 
-            -- init the model and update view
-            -- we do the update here so that we do not see the mustache syntax while waiting for getList to return
-            now <- getCurrentTime
-            modelTV <- newTVarIO (initModel now)
-            update =<< (atomically $ readTVar modelTV)
-
-newAgreementTemplate :: JSDocument -> IO (JSNode, Model -> IO (), (FormAction, (Text, Text)) -> IO (Maybe Text, Maybe Text, Maybe Text))
-newAgreementTemplate d = mkCtls d -- updateAgreementForm
-  {- [domc|
-  <div id="agreements-settings">
-   <form>
-     <f-mk-ctls></f-mk-ctls>
-    </form>
-  </div>
- |] -}
+            addEventListener formN (ev @Submit) (submitForm ctrl) False
   where
---     mkCtls :: JSDocument -> IO (JSNode, Model -> IO (), (Text, Text) -> IO (Text, Text))
-    mkCtls d =
-      do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
---         print $ frm
-         (nodes, getter) <- renderForm d updateAgreementForm
-         mapM_ (appendChild formN) nodes
-         getter (SetValue, ("",""))
---         getter (SetValue, ("", "", ListAppend ["4", "5", "6"]))
+    handleResponse :: AgreementRevision -> IO ()
+    handleResponse ar =
+      do putStrLn $  "handleResponse ar = " ++ show ar
+    submitForm ::  ((FormAction, ()) -> IO (Maybe Text, Maybe Text, Maybe Text)) -> EventObject Submit -> IO ()
+    submitForm ctrl e =
+      do preventDefault e
+         stopPropagation e
+         mVal <- ctrl (Validate, ())
+         putStrLn $ "mVal = " ++ show mVal
+         case mVal of
+           (Just name, Just note, Just body) ->
+             do remote modelTV POST (withURL @CreateAgreement) (Just (NewAgreementData name note (Map.singleton "en_US" body))) handleResponse
+           _ -> pure ()
 
-         (Just div) <- createJSElement d "div"
-         (Just tn)  <- createJSTextNode d ""
-         appendChild div tn
-         appendChild formN div
+createForm :: JSDocument -> FormArrow b c -> b -> IO (JSNode, (FormAction, b) -> IO c)
+createForm d frm b =
+  do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
+     (nodes, getter) <- renderForm d frm
+     mapM_ (appendChild formN) nodes
+     getter (SetValue, b)
+     pure (formN, getter)
+{-
+newAgreementTemplate :: JSDocument -> IO (JSNode, Model -> IO (), (FormAction, (Text, Text)) -> IO (Maybe Text, Maybe Text, Maybe Text))
+newAgreementTemplate d =
+  do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
+     print $ frm
+     (nodes, getter) <- renderForm d updateAgreementForm
+     mapM_ (appendChild formN) nodes
+     getter (SetValue, ("",""))
 
-         addEventListener formN (ev @Submit) (\e ->
+     (Just div) <- createJSElement d "div"
+     (Just tn)  <- createJSTextNode d ""
+     appendChild div tn
+     appendChild formN div
+
+     addEventListener formN (ev @Submit) (\e ->
                       do preventDefault e
                          stopPropagation e
                          putStrLn "Submit handler"
@@ -633,4 +660,6 @@ newAgreementTemplate d = mkCtls d -- updateAgreementForm
                          setTextContent div $ Text.pack $ show mVal
                                              ) False
 
-         pure (formN, \_ -> pure (), getter)
+     pure (formN, \_ -> pure (), getter)
+-}
+

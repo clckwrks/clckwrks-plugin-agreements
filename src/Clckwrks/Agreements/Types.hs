@@ -14,6 +14,7 @@ import Data.Time.Clock      (UTCTime)
 import Data.Text            (Text)
 import Data.Typeable        (Typeable)
 import Data.UserId          (UserId(..))
+import Web.Routes.TH        (derivePathInfo)
 
 agreementsPluginName :: Text
 agreementsPluginName = "agreements"
@@ -39,6 +40,7 @@ makeLenses ''AgreementsSettings
 newtype RevisionId = RevisionId { _unRevisionId :: Word32 } -- Word16 or even Word8 should be plenty, but bytes are cheap
   deriving (Eq, Ord, Read, Show, Data, Typeable, Enum)
 deriveSafeCopy 1 'base ''RevisionId
+derivePathInfo ''RevisionId
 makeLenses ''RevisionId
 {-
 -- | Revision
@@ -61,6 +63,7 @@ instance Indexable '[RevisionId] Revision where
 newtype AgreementId = AgreementId { _unAgreementId :: Word32 } -- Word16 or even Word8 should be plenty, but bytes are cheap
   deriving (Eq, Ord, Read, Show, Data, Typeable, Enum)
 deriveSafeCopy 1 'base ''AgreementId
+derivePathInfo ''AgreementId
 makeLenses ''AgreementId
 
 -- | Agreement
@@ -135,16 +138,22 @@ agreementRevision = to $ \agreement ->
   let am = _agreementMeta agreement
   in (_amAgreementId am , _amRevisionId am)
 
-type AgreementIxs = '[AgreementId, RevisionId, AgreementRevision]
+type AgreementIxs = '[AgreementId, RevisionId, UTCTime, AgreementRevision]
 
 instance Indexable AgreementIxs Agreement where
   indices = ixList (ixFun ((:[]) . view agreementId))
                    (ixFun ((:[]) . view revisionId))
+                   (ixFun ((:[]) . view revisionDate))
                    (ixFun ((:[]) . view agreementRevision))
 
 type IxAgreements = IxSet AgreementIxs Agreement
 
-{-
+
 data NewAgreementData = NewAgreementData
-  { nad
--}
+  { nadAgreementName :: Text
+  , nadAgreementNote :: Text
+  , nadAgreementBody :: Map Lang Text
+  }
+  deriving (Eq, Ord, Read, Show, Data)
+deriveSafeCopy 1 'base ''NewAgreementData
+

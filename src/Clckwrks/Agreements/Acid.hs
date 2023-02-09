@@ -6,8 +6,10 @@ module Clckwrks.Agreements.Acid
     , initialAgreementsState
       -- * events
     , GetAgreements(..)
+    , GetAgreement(..)
     , GetLatestAgreementsMeta(..)
     , SetAgreements(..)
+    , NewAgreement(..)
 --    , GetAgreementsSettings(..)
     ) where
 
@@ -32,6 +34,7 @@ import Data.List            (maximumBy)
 import           Data.Map   (Map)
 import qualified Data.Map   as Map
 import Data.Maybe           (fromJust)
+import Data.Proxy           (Proxy(..))
 import Data.SafeCopy        (Migrate(..), base, deriveSafeCopy, extension)
 import Data.String          (fromString)
 import Data.Text            (Text)
@@ -94,6 +97,7 @@ newAgreement nm now author note bodies =
      agreements .= IxSet.insert newAgreement as
      pure newAgreement
 
+-- FIXME: this doesn't work if there is more than one revision of an agreement
 updateAgreementBody :: AgreementId
                     -> UTCTime       -- ^ current time
                     -> UserId
@@ -119,6 +123,19 @@ updateAgreementBody aid now author note bodies =
 getAgreements :: Query AgreementsState IxAgreements
 getAgreements = view agreements
 
+getAgreement :: AgreementId -> Maybe RevisionId -> Query AgreementsState (Either Text Agreement)
+getAgreement aid mRid =
+  do as <- view agreements
+     case mRid of
+       Nothing ->
+         case IxSet.toDescList (Proxy :: Proxy UTCTime) (as @= aid) of
+           [] -> pure $ Left $ "GetAgreement - Could not find AgreementId = " <> (Text.pack $ show aid)
+           (a:_) -> pure $ Right a
+       (Just rid) ->
+         case IxSet.toDescList (Proxy :: Proxy UTCTime) (as @= (aid, rid)) of -- There should only be one match here
+           [] -> pure $ Left $ "GetAgreement - Could not find AgreementId = " <> (Text.pack $ show aid) <> ", RevisionId = " <> (Text.pack $ show rid)
+           (a:_) -> pure $ Right a
+
 -- | Get a list of the 'AgreementMeta' for the most recent revision of each 'Agreement'.
 --
 -- sort order: unspecified
@@ -141,6 +158,7 @@ getAgreementsSettings =
 makeAcidic ''AgreementsState
   [ 'getAgreements
   , 'getLatestAgreementsMeta
+  , 'getAgreement
   , 'setAgreements
   , 'newAgreement
   , 'updateAgreementBody

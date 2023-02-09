@@ -3,7 +3,7 @@ module Clckwrks.Agreements.Route where
 
 import Clckwrks.Monad               (ClckT, plugins)
 import Clckwrks.Admin.Template      (template)
-import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), {- getAgreementsSettings, -} setAgreements, getLatestAgreementsMeta)
+import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), createAgreement, getAgreement, {- getAgreementsSettings, -} setAgreements, getLatestAgreementsMeta)
 import Clckwrks.Agreements.Monad     (AgreementsConfig(..), AgreementsM, clckT2AgreementsT)
 import Clckwrks.Agreements.Types     (agreementsPluginName)
 import Clckwrks.Agreements.URL       (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..))
@@ -42,6 +42,8 @@ routeAgreementsAdminAPI aaURL =
   do liftIO $ putStrLn $ "aaURL = " ++ show aaURL
      case aaURL of
        GetLatestAgreementsMeta -> getLatestAgreementsMeta
+       CreateAgreement -> createAgreement
+       (GetAgreement aid) -> getAgreement aid
 {-
        GetAgreementsSettings ->
          do getAgreementsSettings
