@@ -86,19 +86,32 @@ type instance ResponseData 'GetAgreement = AgreementRevision
 -}
 data AgreementsAdminURL
   = AgreementsSettings
+  | Agreement AgreementId
   | AgreementsSettingsJs
   | AgreementsAdminApi AgreementsAdminApiURL
   deriving (Eq, Ord, Data, Typeable, Read, Show)
 derivePathInfo ''AgreementsAdminURL
 
+
+data AgreementsApiURL
+  = RecordAgreed
+  deriving (Eq, Ord, Data, Typeable, Read, Show)
+derivePathInfo ''AgreementsApiURL
+
+instance KnownURL 'RecordAgreed where knownURL _ = RecordAgreed
+
 data AgreementsURL
     = AgreementsAdmin AgreementsAdminURL
+    | AgreementsApi AgreementsApiURL
+    | AgreementsRequired
+    | AgreementsSignupPlugin
+    | ViewAgreement AgreementId
+    | ViewAgreementRevision AgreementId RevisionId
       deriving (Eq, Ord, Data, Typeable, Read, Show)
 derivePathInfo ''AgreementsURL
 
 data TaggedURL c (url :: *) = TaggedURL url
 deriving instance (Show url) => Show (TaggedURL c url)
-
 
 -- withURL :: forall url (con :: url). (KnownURL (con :: url)) => TaggedURL con url
 withURL0 :: forall k (con :: k). (KnownURL (con :: k)) => TaggedURL con k
@@ -141,6 +154,12 @@ instance WithURL CreateAgreement where
   type WithURLType  CreateAgreement = TaggedURL CreateAgreement AgreementsAdminApiURL
   withURL = TaggedURL CreateAgreement
 
+
+instance WithURL RecordAgreed where
+  type RequestData  RecordAgreed = [AgreementRevision]
+  type ResponseData RecordAgreed = ()
+  type WithURLType  RecordAgreed = TaggedURL RecordAgreed AgreementsApiURL
+  withURL = TaggedURL RecordAgreed
 
 {-
 type family Produces con url :: Bool where

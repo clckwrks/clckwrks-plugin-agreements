@@ -2,7 +2,7 @@
     MultiParamTypeClasses, OverloadedStrings, StandaloneDeriving, TemplateHaskell #-}
 module Clckwrks.Agreements.Types where
 
-import Control.Lens         (Getter, Lens', makeLenses, to, view)
+import Control.Lens         (Getter, Lens', (^.), _1, _2, makeLenses, to, view)
 import qualified Data.ByteString as BS
 import Data.Data            (Data)
 import Data.Word            (Word32)
@@ -85,17 +85,17 @@ makeLenses ''AgreementId
 --
 -- It is sensible for the 'agreementName' to be unique, but that is not a property we chose to enforce.
 
+-- FIXME: needs some field indicating whether an agreement is required/active
 data AgreementMeta = AgreementMeta
   { _amAgreementId    :: AgreementId
   , _amAgreementName  :: Text  -- ^ generally things like "Privacy Policy", "Terms & Conditions"
   , _amRevisionId     :: RevisionId
   , _amRevisionDate   :: UTCTime
-  , _amRevisionNote   :: Text   -- ^ A note to administrators about why the document was revised
+  , _amRevisionNote   :: Text   -- ^ A note to administrators about why the document was revised -- FIXME: don't send to client
   , _amRevisionAuthor :: UserId  -- ^ who made this change. Really, a lawyer probably 'authored' the change. We just track which admin actually put the changes into the system.
   }
   deriving (Eq, Ord, Read, Show, Data, Typeable)
 deriveSafeCopy 1 'base ''AgreementMeta
-
 
 data Agreement = Agreement
   { _agreementMeta  :: AgreementMeta
@@ -148,6 +148,28 @@ instance Indexable AgreementIxs Agreement where
 
 type IxAgreements = IxSet AgreementIxs Agreement
 
+-- ** Agreed
+
+data Agreed =
+  Agreed { _agreedBy :: UserId
+         , _agreedTo :: AgreementRevision
+         , _agreedOn :: UTCTime
+         }
+  deriving (Eq, Ord, Read, Show, Data, Typeable)
+deriveSafeCopy 1 'base ''Agreed
+makeLenses ''Agreed
+
+type AgreedIxs = '[UserId, AgreementId, RevisionId, UTCTime]
+
+instance Indexable AgreedIxs Agreed where
+  indices = ixList (ixFun ((:[]) . view agreedBy))
+                   (ixFun ((:[]) . view (agreedTo . _1)))
+                   (ixFun ((:[]) . view (agreedTo . _2)))
+                   (ixFun ((:[]) . view agreedOn))
+
+type IxAgreeds = IxSet AgreedIxs Agreed
+
+-- * NewAgreementData
 
 data NewAgreementData = NewAgreementData
   { nadAgreementName :: Text

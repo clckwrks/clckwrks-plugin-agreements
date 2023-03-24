@@ -3,9 +3,9 @@ module Clckwrks.Agreements.API where
 
 import Control.Monad.State (MonadState, get)
 import Clckwrks
-import Clckwrks.Agreements.Acid as Acid (AgreementsState, GetAgreement(..), GetAgreements(..), GetLatestAgreementsMeta(..), NewAgreement(..), SetAgreements(..))
+import Clckwrks.Agreements.Acid as Acid (AgreementsState, GetAgreement(..), GetAgreements(..), GetLatestAgreementsMeta(..), NewAgreement(..), SetAgreements(..), GetAgreeds(..), GetAgreedsByUserId(..), RecordAgreeds(..))
 import Clckwrks.Agreements.Monad (AgreementsM)
-import Clckwrks.Agreements.Types (AgreementsSettings(..), NewAgreementData(..), AgreementId(..), RevisionId(..), agreementRevision)
+import Clckwrks.Agreements.Types (Agreed(..), AgreementMeta(..), AgreementsSettings(..), NewAgreementData(..), AgreementId(..), RevisionId(..), agreementRevision)
 import Clckwrks.Agreements.URL as URL (WithURL(..), AgreementsAdminApiURL(..), RequestData, ResponseData)
 import Clckwrks.Authenticate.Plugin (getUserId)
 import Clckwrks.Unauthorized        (unauthorizedPage)
@@ -36,14 +36,16 @@ import qualified Network.HTTP.Client as HC
 import Web.Plugins.Core --             (Plugin(..), Plugins(..), PluginsState(pluginsConfig), When(..), addCleanup, addHandler, addPluginState, addPostHook, initPlugin, getConfig, getPluginRouteFn)
 
 data AgreementsPagePaths = AgreementsPagePaths
-  { _agreementsSettingsPath :: Maybe FilePath
+  { _agreementsSettingsPath     :: Maybe FilePath
+  , _agreementsSignupPluginPath :: Maybe FilePath
   }
   deriving (Eq, Ord, Read, Show, Data, Typeable)
 makeLenses ''AgreementsPagePaths
 
 emptyAgreementsPagePaths :: AgreementsPagePaths
 emptyAgreementsPagePaths = AgreementsPagePaths
-  { _agreementsSettingsPath = Nothing
+  { _agreementsSettingsPath     = Nothing
+  , _agreementsSignupPluginPath = Nothing
   }
 
 data AgreementsPluginState = AgreementsPluginState
@@ -112,6 +114,16 @@ getLatestAgreementsMeta =
      let serialized = runPut (safePut ams)
      ok $ toResponse serialized
 
+getRequiredAgreements :: AgreementsM Response
+getRequiredAgreements =
+  do method GET
+     ams <- query Acid.GetLatestAgreementsMeta
+     let serialized = runPut (safePut ams)
+     ok $ toResponse serialized
+       where
+         removeNote :: AgreementMeta -> AgreementMeta
+         removeNote am = am { _amRevisionNote = "" }
+
 handleRequestWithBody :: (SafeCopy (RequestData c), SafeCopy (ResponseData c), WithURL c) => (Proxy c) -> Method -> (RequestData c -> AgreementsM (ResponseData c)) -> AgreementsM Response
 handleRequestWithBody _ mtd f =
   do method mtd
@@ -138,3 +150,37 @@ getAgreement :: AgreementId -> AgreementsM Response
 getAgreement aid =
   handleRequest (Proxy :: Proxy URL.GetAgreement) GET $
     do query (Acid.GetAgreement aid Nothing)
+
+getAgreementRevision :: AgreementId -> RevisionId -> AgreementsM Response
+getAgreementRevision aid rid =
+  handleRequest (Proxy :: Proxy URL.GetAgreement) GET $
+    do query (Acid.GetAgreement aid (Just rid))
+
+-- * Agreed
+
+recordAgreed :: AgreementsM Response
+recordAgreed =
+  do method POST
+
+     mUid <- getUserId
+     case mUid of
+       Nothing -> unauthorizedPage ("Unable to find a user id associated with this request." :: TL.Text)
+       (Just uid) ->
+         do mBody <- takeRequestBody =<< askRq
+            -- decodeBody (defaultBodyPolicy "/tmp/" 1024 1024 1024)
+
+            -- liftIO $ putStrLn $ "setAgreementsBaseUrl mBody = " ++ show mBody
+            case mBody of
+              Nothing ->
+                badRequest $ toResponse ("missing [AgreementRevision] value" :: String)
+              (Just (Body bd)) ->
+                case runGetLazy safeGet bd of
+                  (Left e) -> badRequest $ toResponse $ "could not decode [AgreementRevision], error = " ++ e
+                  (Right ars) ->
+                      do now       <- liftIO $ getCurrentTime
+                         let ags = map (\ar -> Agreed { _agreedBy = uid
+                                                      , _agreedTo = ar
+                                                      , _agreedOn = now
+                                                      }) ars
+                         update (RecordAgreeds ags)
+                         ok (toResponse (runPut (safePut ())))

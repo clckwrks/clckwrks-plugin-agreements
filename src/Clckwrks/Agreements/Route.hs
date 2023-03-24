@@ -3,10 +3,11 @@ module Clckwrks.Agreements.Route where
 
 import Clckwrks.Monad               (ClckT, plugins)
 import Clckwrks.Admin.Template      (template)
-import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), createAgreement, getAgreement, {- getAgreementsSettings, -} setAgreements, getLatestAgreementsMeta)
+import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), createAgreement, getAgreement, getAgreementRevision, getRequiredAgreements, setAgreements, getLatestAgreementsMeta, recordAgreed)
 import Clckwrks.Agreements.Monad     (AgreementsConfig(..), AgreementsM, clckT2AgreementsT)
+import Clckwrks.Agreements.Page.ViewAgreement (viewAgreementPage)
 import Clckwrks.Agreements.Types     (agreementsPluginName)
-import Clckwrks.Agreements.URL       (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..))
+import Clckwrks.Agreements.URL       (AgreementsURL(..), AgreementsAdminURL(..), AgreementsApiURL(..), AgreementsAdminApiURL(..))
 import Clckwrks.ProfileData.API     (Role(..), requiresRole_)
 import Control.Monad.State          (get)
 import Control.Monad.Trans          (liftIO)
@@ -16,7 +17,6 @@ import Happstack.Server             ( Response, Happstack, Method(GET), escape, 
                                     )
 import HSP.XMLGenerator
 import HSP.XML                   (fromStringLit)
-
 import Language.Haskell.HSX.QQ      (hsx)
 import Web.Plugins.Core             (getPluginRouteFn, getPluginState)
 
@@ -36,6 +36,30 @@ routeAgreements url' =
               (Just p) -> do -- liftIO $ putStrLn $ "agreements-settings path is = "++ p
                              serveFile (asContentType "text/javascript;charset=UTF-8") p
 
+       AgreementsRequired ->
+         do getRequiredAgreements
+
+       ViewAgreement aid ->
+         do viewAgreementPage aid Nothing
+
+       ViewAgreementRevision aid rid ->
+         do viewAgreementPage aid (Just rid)
+
+       AgreementsSignupPlugin ->
+         do p <- plugins <$> get
+            ~(Just mps) <- getPluginState p agreementsPluginName
+            case _agreementsSignupPluginPath (_agreementsPagePaths mps) of
+              Nothing -> internalServerError $ toResponse ("path to agreements-signup-plugin not configure." :: String)
+              (Just p) -> do -- liftIO $ putStrLn $ "agreements-settings path is = "++ p
+                             serveFile (asContentType "text/javascript;charset=UTF-8") p
+       (AgreementsApi aURL) -> routeAgreementsAPI aURL
+
+routeAgreementsAPI :: AgreementsApiURL
+               -> AgreementsM Response
+routeAgreementsAPI aURL =
+  case aURL of
+    RecordAgreed -> recordAgreed
+
 routeAgreementsAdminAPI :: AgreementsAdminApiURL
                -> AgreementsM Response
 routeAgreementsAdminAPI aaURL =
@@ -44,6 +68,8 @@ routeAgreementsAdminAPI aaURL =
        GetLatestAgreementsMeta -> getLatestAgreementsMeta
        CreateAgreement -> createAgreement
        (GetAgreement aid) -> getAgreement aid
+       (GetAgreementRevision aid rid) -> getAgreementRevision aid rid
+
 {-
        GetAgreementsSettings ->
          do getAgreementsSettings
@@ -59,7 +85,13 @@ checkAuth url =
      ~(Just clckShowFn) <- getPluginRouteFn p "clck" -- (pluginName clckPlugin) -- a mildly dangerous hack to avoid circular depends
      let requiresRole = requiresRole_ clckShowFn
      case url of
-       (AgreementsAdmin _) -> requiresRole (Set.fromList [Administrator]) url
+       AgreementsSignupPlugin  -> pure url
+       AgreementsRequired      -> pure url
+       (ViewAgreement aid)     -> pure url
+       (ViewAgreementRevision aid rid) -> pure url
+       (AgreementsAdmin (AgreementsAdminApi (GetAgreementRevision {})))    -> pure url
+       (AgreementsAdmin _)    -> requiresRole (Set.fromList [Administrator]) url
+       (AgreementsApi RecordAgreed) -> pure url
 
 
 servePagelet :: AgreementsURL -> AgreementsM Response

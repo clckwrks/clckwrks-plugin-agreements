@@ -17,15 +17,15 @@ module Main where
 import Control.Arrow        (Arrow(arr,first, second, (&&&), (***)), ArrowChoice((+++)), (<<<), (>>>),  returnA)
 import Control.Category     (Category(id,(.)))
 import Control.Monad        ((<=<), when)
-import Clckwrks.Agreements.Types (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementRevision, AgreementsSettings(..), NewAgreementData(..), RevisionId(..), agreementName, revisionNote, revisionBody)
-import Clckwrks.Agreements.URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..), TaggedURL(..), withURL)
+import Clckwrks.Agreements.Types as Type (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementRevision, AgreementsSettings(..), NewAgreementData(..), RevisionId(..), agreementName, revisionNote, revisionBody)
+import Clckwrks.Agreements.URL as URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..), TaggedURL(..), withURL)
 import Control.Lens ((&), (^.), (.~))
 import Control.Monad.Trans (MonadIO(liftIO))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, modifyTVar', readTVar, writeTVar)
 import Control.Concurrent.STM (atomically)
 import Chili.FormArrow
-import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getData, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeName, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation, createJSTextNode, createJSElement)
+import Chili.Types (Event(Submit, Change, ReadyStateChange), EventObject, InputEvent(Input), PopStateEvent(PopState), PopStateEventObject(..), InputEventObject(..), IsJSNode, JSElement, JSNode, JSNodeList, byteStringToArrayBuffer, createJSElement, createJSTextNode, ev, getData, getLength, item, unJSNode, fromJSNode, getFirstChild, getOuterHTML, getValue, newXMLHttpRequest, nodeName, nodeType, nodeValue, open, send, sendString, getStatus, getReadyState, getResponseByteString, getResponseText, getResponseType, getValue, parentNode, preventDefault, replaceChild, remove, sendArrayBuffer, setAttribute, setRequestHeader, setResponseType, setTextContent, setValue, stopPropagation, createJSTextNode, createJSElement, window)
 import qualified Data.ByteString.Char8 as BS
 import Data.Char (toUpper)
 import qualified Data.JSString as JS
@@ -45,6 +45,10 @@ import Dominator.Types (JSDocument, JSElement, JSNode, MouseEvent(..), MouseEven
 import Dominator.DOMC
 import Dominator.JSDOM
 import Data.IORef        (IORef, newIORef, writeIORef, readIORef)
+import qualified GHCJS.DOM as DOM
+import GHCJS.DOM.History (History, pushState)
+import GHCJS.DOM.Window (getHistory)
+import GHCJS.Marshal.Pure (PToJSVal(pToJSVal))
 import Network.HTTP.Types (StdMethod(GET, POST), renderStdMethod)
 import Language.Haskell.TH (Name, ExpQ, mkName)
 import Language.Haskell.TH.Syntax (qAddDependentFile)
@@ -118,10 +122,11 @@ initModel now = Model
 
 dummyAgreement :: Agreement
 dummyAgreement =
-  Agreement { _agreementMeta = AgreementMeta { _amAgreementId    = AgreementId 1
+  Type.Agreement
+            { _agreementMeta = AgreementMeta { _amAgreementId    = AgreementId 1
                                              , _amAgreementName  = "sample agreement"
                                              , _amRevisionId     = RevisionId 1
-                                             , _amRevisionDate   = UTCTime (fromOrdinalDate 2023 31) (secondsToDiffTime 0) 
+                                             , _amRevisionDate   = UTCTime (fromOrdinalDate 2023 31) (secondsToDiffTime 0)
                                              , _amRevisionNote   = "This is just a test"
                                              , _amRevisionAuthor = UserId 1
                                              }
@@ -141,24 +146,24 @@ remote modelTV method (TaggedURL apiUrl) mReq callback =
 --     print f
      setResponseType xhr "arraybuffer"
      let settingsHandler ev =
-           do putStrLn "settingsHandler - readystatechange"
+           do debugStrLn "settingsHandler - readystatechange"
               rs <- getReadyState xhr
-              putStrLn $ "settingsHandler - readstate = " ++ show rs
+              debugStrLn $ "settingsHandler - readstate = " ++ show rs
               case rs of
                 4 -> do
                   status <- getStatus xhr
                   ty     <- getResponseType xhr
                   mbs    <- getResponseByteString xhr
-                  putStrLn $ "status = " ++ show status ++ " , type = " ++ Text.unpack ty ++ " , text = " ++ (maybe "Nothing" BS.unpack mbs) ++ " $"
+                  debugStrLn $ "status = " ++ show status ++ " , type = " ++ Text.unpack ty ++ " , text = " ++ (maybe "Nothing" BS.unpack mbs) ++ " $"
                   case mbs of
                     Nothing -> pure ()
                     (Just bs) ->
                       case runGet safeGet bs of
                         (Left e) ->
-                          do putStrLn e
+                          do debugStrLn e
                              pure ()
                         (Right r) ->
-                          do putStrLn $ "res - " ++ show r
+                          do debugStrLn $ "res - " ++ show r
                              callback r
                 _ -> pure ()
      addEventListener xhr (ev @ReadyStateChange) settingsHandler False
@@ -169,7 +174,7 @@ remote modelTV method (TaggedURL apiUrl) mReq callback =
      case mReq of
        Nothing    -> send xhr
        (Just req) ->
-         do putStrLn $ "sending request value = " ++ show req
+         do debugStrLn $ "sending request value = " ++ show req
             setRequestHeader xhr "Content-Type" "application/octet-stream"
             sendArrayBuffer xhr (byteStringToArrayBuffer (runPut (safePut req)))
 
@@ -230,15 +235,20 @@ main =
                                                                         update =<< (atomically $ readTVar modelTV)
                                                                  )
                     -}
-            putStrLn "init done."
+            (Just w) <- window
+            addEventListener w (ev @PopState) (\peo ->
+               do debugStrLn "User clicked back."
+                  pure ()
+                                                     ) False
+            debugStrLn "init done."
             pure ()
 
 changeHandler :: (Model -> IO ()) -> TVar Model -> EventObject Change -> IO ()
 changeHandler update modelTV e =
-  do putStrLn "changeHandler"
+  do debugStrLn "changeHandler"
      case fromEventTarget @JSElement (target e) of
        Nothing  -> do
-         putStrLn "change not attached to an element"
+         debugStrLn "change not attached to an element"
          pure ()
        (Just elem) -> do
          mName <- getAttribute elem "name"
@@ -261,7 +271,10 @@ changeHandler update modelTV e =
 
 viewAgreement :: TVar Model -> JSNode -> AgreementId -> Maybe RevisionId -> IO ()
 viewAgreement modelTV rootNode aid mrid =
-  do putStrLn $ "viewAgreement"
+  do debugStrLn $ "viewAgreement"
+     w <- DOM.currentWindowUnchecked
+     history <- getHistory w
+     pushState history (pToJSVal ("" :: JS.JSString)) ("" :: JS.JSString) (Just ("/foo" :: JS.JSString))
      (Just d) <- currentDocument
      mp <- parentNode rootNode
      case mp of
@@ -306,17 +319,36 @@ agreementList modelTV rootNode =
                  update m'
 
             addEventListener newNode (ev @Click) (\event ->
-                     do putStrLn "Click"
+                     do debugStrLn "Click"
                         case fromEventTarget @JSNode (target event) of
-                          Nothing -> putStrLn "could not find event target"
+                          Nothing -> debugStrLn "could not find event target"
                           (Just n) ->
-                            do mAid <- findAgreementId n
-                               putStrLn $ "aid = " ++ show mAid
-                               case mAid of
-                                 Nothing -> pure ()
-                                 (Just aid) ->
-                                   viewAgreement modelTV newNode aid Nothing
-                               pure ()) False
+                            do mb <- findButton n
+                               case mb of
+                                 (Just nm) ->
+                                   newAgreement modelTV (fromJust $ fromJSNode @JSElement newNode)
+                                 Nothing ->
+                                   do mAid <- findAgreementId n
+                                      debugStrLn $ "aid = " ++ show mAid
+                                      case mAid of
+                                        Nothing -> pure ()
+                                        (Just aid) ->
+                                          do viewAgreement modelTV newNode aid Nothing
+                                             pure ()) False
+
+findButton :: JSNode -> IO (Maybe JS.JSString)
+findButton n =
+  do nn <- nodeName n
+     case nn of
+       "BUTTON" ->
+         do case fromJSNode @JSElement n of
+              Nothing -> pure Nothing
+              (Just e) ->
+                do mName <- getAttribute e "name"
+                   case mName of
+                     (Just n) -> pure $ Just n
+                     Nothing  -> pure Nothing
+       _ -> pure Nothing
 
 findAgreementId :: JSNode -> IO (Maybe AgreementId)
 findAgreementId n =
@@ -324,7 +356,7 @@ findAgreementId n =
      case nn of
        "TR" ->
          do mid <- getData n "agreementId"
-            putStrLn $ "agreementId = " ++ show mid
+            debugStrLn $ "agreementId = " ++ show mid
             case mid of
               Nothing -> pure Nothing
               (Just s) ->
@@ -355,6 +387,7 @@ viewAgreementTemplate =
 agreementListTemplate :: JSDocument -> IO (JSNode, Model -> IO ())
 agreementListTemplate = [domc|
   <div id="agreements-settings">
+      <button name="create-new-agreement">Create New Agreement</button>
       <table class="table table-striped table-hover">
        <thead>
         <tr>
@@ -618,13 +651,13 @@ newAgreement modelTV rootNode =
   where
     handleResponse :: AgreementRevision -> IO ()
     handleResponse ar =
-      do putStrLn $  "handleResponse ar = " ++ show ar
+      do debugStrLn $  "handleResponse ar = " ++ show ar
     submitForm ::  ((FormAction, ()) -> IO (Maybe Text, Maybe Text, Maybe Text)) -> EventObject Submit -> IO ()
     submitForm ctrl e =
       do preventDefault e
          stopPropagation e
          mVal <- ctrl (Validate, ())
-         putStrLn $ "mVal = " ++ show mVal
+         debugStrLn $ "mVal = " ++ show mVal
          case mVal of
            (Just name, Just note, Just body) ->
              do remote modelTV POST (withURL @CreateAgreement) (Just (NewAgreementData name note (Map.singleton "en_US" body))) handleResponse
@@ -662,4 +695,3 @@ newAgreementTemplate d =
 
      pure (formN, \_ -> pure (), getter)
 -}
-

@@ -3,3 +3,5 @@
 .cabal-sandbox
 .ghc.environment.*
 dist-newstyle
+result
+cabal.project

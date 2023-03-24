@@ -27,6 +27,7 @@ common shared-ghcjs-properties
 library
   import: shared-properties
   build-depends: base
+               , aeson
                , bytestring
                , cereal
                , containers
@@ -42,10 +43,9 @@ library
 
   if !impl(ghcjs)
     build-depends: acid-state
-                 , aeson
-                 , clckwrks
+                 , clckwrks >= 0.28.1
                  , filepath
-                 , happstack-authenticate
+                 , happstack-authenticate >= 3.0
                  , happstack-hsp
                  , happstack-server
                  , http-client
@@ -58,6 +58,12 @@ library
                  , unordered-containers
                  , vector
                  , web-plugins
+  if impl(ghcjs)
+   build-depends: chili,
+                  ghcjs-base,
+                  happstack-authenticate >= 3.0,
+                  http-types
+
   hs-source-dirs: src
   if !impl(ghcjs)
       exposed-modules:
@@ -65,11 +71,16 @@ library
               Clckwrks.Agreements.Acid
               Clckwrks.Agreements.Monad
               Clckwrks.Agreements.Page.Template
+              Clckwrks.Agreements.Page.ViewAgreement
               Clckwrks.Agreements.Plugin
               Clckwrks.Agreements.Route
+  if impl(ghcjs)
+      exposed-modules:
+              Clckwrks.Agreements.SignupPlugin
   exposed-modules:
                   Clckwrks.Agreements.Types
                   Clckwrks.Agreements.URL
+
 
 executable             agreements-settings
   import:              shared-ghcjs-properties
@@ -88,6 +99,37 @@ executable             agreements-settings
                      , containers
                      , http-types
                      , ghcjs-base
+                     , ghcjs-dom
+                     , lens
+                     , mtl
+                     , safecopy
+                     , stm
+                     , reform
+                     , reform-hsp
+                     , text
+                     , time
+                     , userid
+                     , template-haskell
+                     , web-routes
+
+executable             agreements-signup-plugin
+  import:              shared-ghcjs-properties
+  if impl(ghcjs)
+    buildable: False
+  else
+    buildable: False
+  hs-source-dirs:      agreements-signup-plugin
+  main-is:             AgreementsSignupPlugin.hs
+  build-depends:       base
+                     , bytestring
+                     , cereal
+                     , chili
+                     , clckwrks-plugin-agreements
+                     , containers
+                     , happstack-authenticate >= 3.0
+                     , http-types
+                     , ghcjs-base
+                     , ghcjs-dom
                      , lens
                      , mtl
                      , safecopy

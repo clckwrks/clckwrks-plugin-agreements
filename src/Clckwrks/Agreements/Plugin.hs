@@ -1,15 +1,17 @@
-{-# LANGUAGE DeriveDataTypeable, RecordWildCards, FlexibleContexts, Rank2Types, OverloadedStrings, MultiParamTypeClasses #-}
+{-# LANGUAGE DeriveDataTypeable, RecordWildCards, FlexibleContexts, Rank2Types, OverloadedStrings, MultiParamTypeClasses, QuasiQuotes #-}
 module Clckwrks.Agreements.Plugin where
 
 import qualified Data.ByteString.Lazy.Char8 as BCL
 import Clckwrks
+import Clckwrks.Monad               (setExtraHeadTags)
 import Clckwrks.Plugin              (clckPlugin)
-import Clckwrks.Agreements.Acid      (initialAgreementsState)
-import Clckwrks.Agreements.API       (AgreementsPluginState(..), emptyAgreementsPagePaths)
-import Clckwrks.Agreements.Monad     (AgreementsConfig(..), runAgreementsT)
-import Clckwrks.Agreements.Route     (routeAgreements)
-import Clckwrks.Agreements.Types     (agreementsPluginName)
-import Clckwrks.Agreements.URL       (AgreementsURL(AgreementsAdmin), AgreementsAdminURL(AgreementsSettings))
+import Clckwrks.Agreements.Acid     (initialAgreementsState)
+import Clckwrks.Agreements.API      (AgreementsPluginState(..), emptyAgreementsPagePaths)
+import Clckwrks.Agreements.Monad    (AgreementsConfig(..), runAgreementsT)
+import Clckwrks.Agreements.Route    (routeAgreements)
+import Clckwrks.Agreements.Types    (agreementsPluginName)
+import Clckwrks.Agreements.URL      (AgreementsURL(AgreementsAdmin, AgreementsSignupPlugin), AgreementsAdminURL(AgreementsSettings))
+import Clckwrks.Authenticate.API    (setSignupPluginURL)
 import Control.Concurrent.STM       (atomically)
 import Control.Concurrent.STM.TVar  (TVar, newTVar, readTVar)
 import Control.Monad.State          (get)
@@ -18,6 +20,8 @@ import Data.Acid.Advanced           (update', query')
 import Data.Acid.Local              (createCheckpointAndClose, openLocalStateFrom,)
 import qualified Data.Set           as Set
 import Data.Text                    (Text)
+import HSP
+import Language.Haskell.HSX.QQ      (hsx)
 import System.FilePath              ((</>))
 import Web.Plugins.Core             (Plugin(..), Plugins(..), PluginsState(pluginsConfig), When(..), addCleanup, addHandler, addPluginState, addPostHook, initPlugin, getConfig, getPluginRouteFn)
 
@@ -58,19 +62,20 @@ agreementsInit plugins =
                                            }
 
      addHandler plugins (pluginName agreementsPlugin) (agreementsHandler agreementsShowURL agreementsConfig)
+--      addExtraHeadTags plugins (pluginName agreementsPlugin, [[hsx| <script>console.log('agreements init goes here')</script>|]])
      addPluginState plugins (pluginName agreementsPlugin) (AgreementsPluginState { _agreementsPagePaths      = emptyAgreementsPagePaths
-                                                                               , _agreementsAcidState      = acid
-                                                                               })
+                                                                                 , _agreementsAcidState      = acid
+                                                                                 })
+     setSignupPluginURL plugins (pluginName agreementsPlugin) (agreementsShowURL AgreementsSignupPlugin [])
      pure Nothing
-
 
 addAgreementsAdminMenu :: ClckT url IO ()
 addAgreementsAdminMenu =
     do p <- plugins <$> get
        ~(Just agreementsShowURL) <- getPluginRouteFn p (pluginName agreementsPlugin)
-       let agreementsSettingsURL    = agreementsShowURL (AgreementsAdmin AgreementsSettings) []
+       let agreementsSettingsURL  = agreementsShowURL (AgreementsAdmin AgreementsSettings) []
        addAdminMenu ("Agreements"
-                    , [ (Set.fromList [Administrator, Editor], "Agreements Settings"   , agreementsSettingsURL)
+                    , [ (Set.fromList [Administrator, Editor], "Agreements"   , agreementsSettingsURL)
                       ]
                     )
 

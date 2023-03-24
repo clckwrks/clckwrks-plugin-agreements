@@ -11,16 +11,20 @@ module Clckwrks.Agreements.Acid
     , SetAgreements(..)
     , NewAgreement(..)
 --    , GetAgreementsSettings(..)
+    , GetAgreeds(..)
+    , GetAgreedsByUserId(..)
+    , RecordAgreed(..)
+    , RecordAgreeds(..)
     ) where
 
 import Clckwrks.Types       (Trust(..))
-import Clckwrks.Agreements.Types ( Agreement(..), AgreementMeta(..), AgreementRevision, AgreementId(..), AgreementsSettings(..), IxAgreements, Lang, RevisionId(..)
+import Clckwrks.Agreements.Types ( Agreement(..), AgreementMeta(..), AgreementRevision, Agreed(..), AgreementId(..), AgreementsSettings(..), IxAgreeds, IxAgreements, Lang, RevisionId(..)
                                  , agreementId, revisionAuthor, revisionBody, revisionDate, revisionId, revisionNote
                                  )
 import Clckwrks.Monad       (ThemeStyleId(..))
 import Control.Applicative  ((<$>))
 import Control.Arrow        (second)
-import Control.Lens         ((?~), (^.), (.=), (.~), (?=), (&), assign, makeLenses, set, use, view, over)
+import Control.Lens         ((?~), (^.), (.=), (%=), (.~), (?=), (&), assign, makeLenses, set, use, view, over)
 import Control.Lens.At      (at)
 import Control.Monad.Reader (ask)
 import Control.Monad.State  (get, modify, put)
@@ -45,6 +49,7 @@ import Data.UserId          (UserId(..))
 
 data AgreementsState  = AgreementsState
     { _agreements :: IxAgreements
+    , _agreeds    :: IxAgreeds
     }
     deriving (Eq, Read, Show, Typeable)
 deriveSafeCopy 1 'base ''AgreementsState
@@ -65,7 +70,8 @@ dummyAgreement =
 initialAgreementsState :: AgreementsState
 initialAgreementsState =
   AgreementsState
-    { _agreements     = IxSet.fromList [dummyAgreement]
+    { _agreements     = IxSet.empty
+    , _agreeds        = IxSet.empty
     }
 
 -- * events
@@ -155,6 +161,25 @@ getAgreementsSettings =
   do b <- view agreements
      pure $ AgreementsSettings b
 -}
+
+-- * IxAgreeds
+
+getAgreeds :: Query AgreementsState IxAgreeds
+getAgreeds = view agreeds
+
+getAgreedsByUserId :: UserId -> Query AgreementsState IxAgreeds
+getAgreedsByUserId uid =
+  do as <- view agreeds
+     pure $ as @= uid
+
+recordAgreed :: Agreed -> Update AgreementsState ()
+recordAgreed agreed =
+  do agreeds %= IxSet.insert agreed
+
+recordAgreeds :: [Agreed] -> Update AgreementsState ()
+recordAgreeds agrs =
+  do agreeds %= IxSet.insertList agrs
+
 makeAcidic ''AgreementsState
   [ 'getAgreements
   , 'getLatestAgreementsMeta
@@ -163,4 +188,8 @@ makeAcidic ''AgreementsState
   , 'newAgreement
   , 'updateAgreementBody
 --  , 'getAgreementsSettings
+  , 'getAgreeds
+  , 'getAgreedsByUserId
+  , 'recordAgreed
+  , 'recordAgreeds
   ]
