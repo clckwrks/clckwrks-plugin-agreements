@@ -111,6 +111,7 @@ agreementsSignupForm =
         in show ars
 
       agreementText :: [((AgreementId, RevisionId), (Text, Text))] -> IO [JSNode]
+      agreementText [] = pure []
       agreementText ams =
         do (Just d)    <- currentDocument
            (Just s) <- createJSElement d "span"

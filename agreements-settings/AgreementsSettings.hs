@@ -47,8 +47,12 @@ import Dominator.JSDOM
 import Data.IORef        (IORef, newIORef, writeIORef, readIORef)
 import qualified GHCJS.DOM as DOM
 import GHCJS.DOM.History (History, pushState)
-import GHCJS.DOM.Window (getHistory)
+import GHCJS.DOM.Location              (Location, getSearch, setHref)
+import GHCJS.DOM.Types (ToJSString)
+import GHCJS.DOM.Window (getHistory, getLocation)
 import GHCJS.Marshal.Pure (PToJSVal(pToJSVal))
+import qualified GHCJS.DOM             as GHCJS
+
 import Network.HTTP.Types (StdMethod(GET, POST), renderStdMethod)
 import Language.Haskell.TH (Name, ExpQ, mkName)
 import Language.Haskell.TH.Syntax (qAddDependentFile)
@@ -180,6 +184,13 @@ remote modelTV method (TaggedURL apiUrl) mReq callback =
 
 noReq :: Maybe ()
 noReq = Nothing
+
+gotoURL :: (ToJSString val) => val -> IO ()
+gotoURL url =
+  do (Just w) <- GHCJS.currentWindow
+     location <- getLocation w
+     setHref location url
+     pure ()
 
 {-
 getListsRemote update modelTV =
@@ -650,8 +661,13 @@ newAgreement modelTV rootNode =
             addEventListener formN (ev @Submit) (submitForm ctrl) False
   where
     handleResponse :: AgreementRevision -> IO ()
-    handleResponse ar =
-      do debugStrLn $  "handleResponse ar = " ++ show ar
+    handleResponse (a, r) =
+      do debugStrLn $  "handleResponse ar = " ++ show (a, r)
+         cbu <- clckwrksBaseURL <$> (atomically $ readTVar modelTV)
+         let url = cbu  <> toPathInfo (ViewAgreementRevision a r)
+         do debugStrLn $  "handleResponse url = " ++ show url
+         gotoURL url
+
     submitForm ::  ((FormAction, ()) -> IO (Maybe Text, Maybe Text, Maybe Text)) -> EventObject Submit -> IO ()
     submitForm ctrl e =
       do preventDefault e
