@@ -179,3 +179,14 @@ data NewAgreementData = NewAgreementData
   deriving (Eq, Ord, Read, Show, Data)
 deriveSafeCopy 1 'base ''NewAgreementData
 
+
+-- * UpdateAgreementData
+
+data UpdateAgreementData = UpdateAgreementData
+  { uadAgreemntId    :: AgreementId
+  , uadAgreementNote :: Text
+  , uadAgreementBody :: Map Lang Text
+  }
+  deriving (Eq, Ord, Read, Show, Data)
+deriveSafeCopy 1 'base ''UpdateAgreementData
+

@@ -3,9 +3,9 @@ module Clckwrks.Agreements.API where
 
 import Control.Monad.State (MonadState, get)
 import Clckwrks
-import Clckwrks.Agreements.Acid as Acid (AgreementsState, GetAgreement(..), GetAgreements(..), GetLatestAgreementsMeta(..), NewAgreement(..), SetAgreements(..), GetAgreeds(..), GetAgreedsByUserId(..), RecordAgreeds(..))
+import Clckwrks.Agreements.Acid as Acid (AgreementsState, GetAgreement(..), GetAgreements(..), GetLatestAgreementsMeta(..), NewAgreement(..), SetAgreements(..), GetAgreeds(..), GetAgreedsByUserId(..), RecordAgreeds(..), UpdateAgreementBody(..))
 import Clckwrks.Agreements.Monad (AgreementsM)
-import Clckwrks.Agreements.Types (Agreed(..), AgreementMeta(..), AgreementsSettings(..), NewAgreementData(..), AgreementId(..), RevisionId(..), agreementRevision)
+import Clckwrks.Agreements.Types (Agreed(..), AgreementMeta(..), AgreementsSettings(..), NewAgreementData(..), AgreementId(..), RevisionId(..), UpdateAgreementData(..), agreementRevision)
 import Clckwrks.Agreements.URL as URL (WithURL(..), AgreementsAdminApiURL(..), RequestData, ResponseData)
 import Clckwrks.Authenticate.Plugin (getUserId)
 import Clckwrks.Unauthorized        (unauthorizedPage)
@@ -106,6 +106,33 @@ createAgreement =
                       do now       <- liftIO $ getCurrentTime
                          agreement <- update (NewAgreement nm now uid nt bd)
                          ok (toResponse (runPut (safePut (agreement ^. agreementRevision))))
+
+updateAgreement :: AgreementsM Response
+updateAgreement =
+  do method POST
+
+     mUid <- getUserId
+     case mUid of
+       Nothing -> unauthorizedPage ("Unable to find a user id associated with this request." :: TL.Text)
+       (Just uid) ->
+         do mBody <- takeRequestBody =<< askRq
+            -- decodeBody (defaultBodyPolicy "/tmp/" 1024 1024 1024)
+
+            -- liftIO $ putStrLn $ "setAgreementsBaseUrl mBody = " ++ show mBody
+            case mBody of
+              Nothing ->
+                badRequest $ toResponse ("missing UpdateAgreementData value" :: String)
+              (Just (Body bd)) ->
+                case runGetLazy safeGet bd of
+                  (Left e) -> badRequest $ toResponse $ "could not decode UpdateAgreementData, error = " ++ e
+                  (Right (UpdateAgreementData aid nt bd)) ->
+                      do now       <- liftIO $ getCurrentTime
+                         mAgreement <- update (UpdateAgreementBody aid now uid nt bd)
+                         case mAgreement of
+                           (Right agreement) ->
+                             ok (toResponse (runPut (safePut (agreement ^. agreementRevision))))
+                           (Left err) ->
+                             badRequest $ toResponse err
 
 getLatestAgreementsMeta :: AgreementsM Response
 getLatestAgreementsMeta =

@@ -647,6 +647,12 @@ label txt =
 div_ :: Text -> FormArrow b c -> FormArrow b c
 div_ cls frm = FormElem "div" [("class", cls)] frm
 
+p_ :: Text -> FormArrow b c -> FormArrow b c
+p_ cls frm = FormElem "p" [("class", cls)] frm
+
+h2_ :: Text -> FormArrow b c -> FormArrow b c
+h2_ cls frm = FormElem "h2" [("class", cls)] frm
+
 li_ :: Text -> FormArrow b c -> FormArrow b c
 li_ cls frm = FormElem "li" [("class", cls)] frm
 

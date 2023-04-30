@@ -2,7 +2,7 @@
 module Clckwrks.Agreements.URL where
 
 import Control.Applicative((<|>))
-import Clckwrks.Agreements.Types (Agreement, AgreementMeta, AgreementRevision, AgreementId(..), NewAgreementData, RevisionId(..))
+import Clckwrks.Agreements.Types (Agreement, AgreementMeta, AgreementRevision, AgreementId(..), NewAgreementData, RevisionId(..), UpdateAgreementData)
 import Data.Data (Data, Typeable)
 import Data.Proxy (Proxy(..))
 -- import Data.SafeCopy               (SafeCopy(..), base, deriveSafeCopy)
@@ -63,6 +63,7 @@ data AgreementsAdminApiURL
   | GetAgreement AgreementId
   | GetAgreementRevision AgreementId RevisionId
   | CreateAgreement
+  | UpdateAgreement
   | SetAgreements
   deriving (Eq, Ord, Data, Typeable, Read, Show)
 derivePathInfo ''AgreementsAdminApiURL
@@ -72,6 +73,7 @@ derivePathInfo ''AgreementsAdminApiURL
 -- this should be generated. Or could we some how use generics?
 instance KnownURL 'GetLatestAgreementsMeta where knownURL _ = GetLatestAgreementsMeta
 instance KnownURL 'CreateAgreement where knownURL _ = CreateAgreement
+instance KnownURL 'UpdateAgreement where knownURL _ = UpdateAgreement
 instance KnownURL 'GetAgreement where knownURL _ = GetAgreement
 instance KnownURL 'GetAgreementRevision where knownURL _ = GetAgreementRevision
 {-
@@ -153,6 +155,12 @@ instance WithURL CreateAgreement where
   type ResponseData CreateAgreement = AgreementRevision
   type WithURLType  CreateAgreement = TaggedURL CreateAgreement AgreementsAdminApiURL
   withURL = TaggedURL CreateAgreement
+
+instance WithURL UpdateAgreement where
+  type RequestData  UpdateAgreement = UpdateAgreementData
+  type ResponseData UpdateAgreement = AgreementRevision
+  type WithURLType  UpdateAgreement = TaggedURL UpdateAgreement AgreementsAdminApiURL
+  withURL = TaggedURL UpdateAgreement
 
 
 instance WithURL RecordAgreed where

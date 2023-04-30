@@ -17,7 +17,7 @@ module Main where
 import Control.Arrow        (Arrow(arr,first, second, (&&&), (***)), ArrowChoice((+++)), (<<<), (>>>),  returnA)
 import Control.Category     (Category(id,(.)))
 import Control.Monad        ((<=<), when)
-import Clckwrks.Agreements.Types as Type (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementRevision, AgreementsSettings(..), NewAgreementData(..), RevisionId(..), agreementName, revisionNote, revisionBody)
+import Clckwrks.Agreements.Types as Type (Agreement(..), AgreementId(..), AgreementMeta(..), AgreementRevision, AgreementsSettings(..), NewAgreementData(..), RevisionId(..), UpdateAgreementData(..), agreementId, agreementName, revisionNote, revisionBody)
 import Clckwrks.Agreements.URL as URL (AgreementsURL(..), AgreementsAdminURL(..), AgreementsAdminApiURL(..), KnownURL(..), RequestData(..), ResponseData(..), TaggedURL(..), withURL)
 import Control.Lens ((&), (^.), (.~))
 import Control.Monad.Trans (MonadIO(liftIO))
@@ -136,11 +136,11 @@ dummyAgreement =
                                              }
             , _revisionBody = Map.singleton "en_US" "This is an agreement. I hope you agree."
             }
-
+{-
 data FieldName
   = UpdateAgreement
   deriving (Eq, Ord, Read, Show)
-
+-}
 
 -- * Query the server
 remote :: (Show (RequestData url), Show (ResponseData url), SafeCopy (RequestData url), SafeCopy (ResponseData url), WithURL url) => TVar Model -> StdMethod -> TaggedURL url AgreementsAdminApiURL -> Maybe (RequestData url) -> (ResponseData url -> IO ()) -> IO ()
@@ -253,7 +253,7 @@ main =
                                                      ) False
             debugStrLn "init done."
             pure ()
-
+{-
 changeHandler :: (Model -> IO ()) -> TVar Model -> EventObject Change -> IO ()
 changeHandler update modelTV e =
   do debugStrLn "changeHandler"
@@ -278,7 +278,7 @@ changeHandler update modelTV e =
                 remote modelTV POST SetAgreements agreements  (\() -> putStrLn "sent ok")
 -}
            _ -> debugStrLn $  "could not find or parse name. mName = " ++ show mName
-
+-}
 
 viewAgreement :: TVar Model -> JSNode -> AgreementId -> Maybe RevisionId -> IO ()
 viewAgreement modelTV rootNode aid mrid =
@@ -296,8 +296,21 @@ viewAgreement modelTV rootNode aid mrid =
             replaceChild p newNode rootNode
 
             remote modelTV GET (withURL @GetAgreement aid) Nothing $ \agreement ->
-              do print agreement
+              do debugPrint agreement
                  update agreement
+
+                 addEventListener newNode (ev @Click) (\event ->
+                     do debugStrLn "Click"
+                        case fromEventTarget @JSNode (target event) of
+                          Nothing -> debugStrLn "could not find event target"
+                          (Just n) ->
+                            do mb <- findButton n
+                               case mb of
+                                 (Just _nm) ->
+                                   updateAgreement modelTV agreement (fromJust $ fromJSNode @JSElement newNode)
+                                 Nothing ->
+                                   pure ()) False
+
                  {-
                  m' <- atomically $
                         do m0 <- readTVar modelTV
@@ -383,6 +396,8 @@ findAgreementId n =
 viewAgreementTemplate :: JSDocument -> IO (JSNode, Agreement -> IO ())
 viewAgreementTemplate =
   [domc|
+      <div id="agreement-settings">
+       <button name="update-agreement">Update Agreement</button>
        <div id="view-agreement">
         <dl>
          <dt>Agreement Name</dt>
@@ -393,6 +408,7 @@ viewAgreementTemplate =
          <dd>{{ show $ model ^. revisionBody }}</dd>
         </dl>
        </div>
+      </div>
        |]
 
 agreementListTemplate :: JSDocument -> IO (JSNode, Model -> IO ())
@@ -615,7 +631,7 @@ newAgreementForm =
 inputText attrs     = FormInput InputText attrs False
 inputSubmit attrs     = FormInput InputSubmit attrs False
 textArea rows attrs = FormTextArea False rows attrs
-
+{-
 updateAgreementForm :: FormArrow (Text, Text) (Maybe Text, Maybe Text, Maybe Text)
 updateAgreementForm =
   div_ "form-horizontal" $
@@ -645,7 +661,7 @@ updateAgreementForm =
 
     submitButton =
       div_ "controls" $ inputSubmit [] <<< pure "Update Agreement"
-
+-}
 
 newAgreement :: TVar Model -> JSElement -> IO ()
 newAgreement modelTV rootNode =
@@ -679,6 +695,7 @@ newAgreement modelTV rootNode =
              do remote modelTV POST (withURL @CreateAgreement) (Just (NewAgreementData name note (Map.singleton "en_US" body))) handleResponse
            _ -> pure ()
 
+
 createForm :: JSDocument -> FormArrow b c -> b -> IO (JSNode, (FormAction, b) -> IO c)
 createForm d frm b =
   do (Just formN) <- fmap toJSNode <$> createJSElement d "form"
@@ -711,3 +728,70 @@ newAgreementTemplate d =
 
      pure (formN, \_ -> pure (), getter)
 -}
+
+-- * Update Agreement
+
+updateAgreementForm :: Text -> FormArrow () (Maybe Text, Maybe Text)
+updateAgreementForm an =
+   proc () ->
+     do  (h2_ "" $ FormSpan Nothing an) -< an
+         div_ "form-horizontal" $
+          (fieldset_ "reform" $
+           (,) <$> agreementNote <*> agreementBody <* submitButton) -< ()
+  where
+{-
+    agreementName :: FormArrow () ()
+    agreementName =
+      pure "" >>>
+--      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label ("Agreement Name: " <> an))
+--          (div_ "controls" $ (FormInput InputText [("class","input-xxlarge")] False) ++> errorSpan))
+-}
+    agreementNote =
+      pure "" >>>
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Update Note" >>>
+          (div_ "controls" $ (FormInput InputText [("class","input-xxlarge")] False) ++> errorSpan))
+
+    agreementBody =
+      pure "" >>>
+      FormValidatorOnChange nonEmptyTextV ""
+        (controlGroup $ label "Agreement Contents (en-US)" >>>
+          (div_ "controls" $ (FormTextArea False 20 [("class","input-xxlarge")]) ++> errorSpan))
+
+    submitButton =
+      div_ "controls" $ FormInput InputSubmit [] False <<< pure "Update Agreement"
+
+
+updateAgreement :: TVar Model -> Agreement -> JSElement -> IO ()
+updateAgreement modelTV agr rootNode =
+  do (Just d) <- currentDocument
+     mp <- parentNode rootNode
+     case mp of
+       Nothing -> pure ()
+       (Just p) ->
+         do -- (newNode, update, getter) <- newAgreementTemplate d
+
+            (formN, ctrl) <- createForm d (updateAgreementForm (agr ^. agreementName)) ()
+            replaceChild p formN rootNode
+
+            addEventListener formN (ev @Submit) (submitForm ctrl) False
+  where
+    handleResponse :: AgreementRevision -> IO ()
+    handleResponse (a, r) =
+      do debugStrLn $  "handleResponse ar = " ++ show (a, r)
+         cbu <- clckwrksBaseURL <$> (atomically $ readTVar modelTV)
+         let url = cbu  <> toPathInfo (ViewAgreementRevision a r)
+         do debugStrLn $  "handleResponse url = " ++ show url
+         gotoURL url
+
+    submitForm ::  ((FormAction, ()) -> IO (Maybe Text, Maybe Text)) -> EventObject Submit -> IO ()
+    submitForm ctrl e =
+      do preventDefault e
+         stopPropagation e
+         mVal <- ctrl (Validate, ())
+         debugStrLn $ "mVal = " ++ show mVal
+         case mVal of
+           (Just note, Just body) ->
+             do remote modelTV POST (withURL @UpdateAgreement) (Just (UpdateAgreementData (agr ^. agreementId) note (Map.singleton "en_US" body))) handleResponse
+           _ -> pure ()

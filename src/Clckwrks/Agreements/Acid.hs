@@ -15,6 +15,7 @@ module Clckwrks.Agreements.Acid
     , GetAgreedsByUserId(..)
     , RecordAgreed(..)
     , RecordAgreeds(..)
+    , UpdateAgreementBody(..)
     ) where
 
 import Clckwrks.Types       (Trust(..))
@@ -103,7 +104,6 @@ newAgreement nm now author note bodies =
      agreements .= IxSet.insert newAgreement as
      pure newAgreement
 
--- FIXME: this doesn't work if there is more than one revision of an agreement
 updateAgreementBody :: AgreementId
                     -> UTCTime       -- ^ current time
                     -> UserId
@@ -112,9 +112,9 @@ updateAgreementBody :: AgreementId
                     -> Update AgreementsState (Either Text Agreement)
 updateAgreementBody aid now author note bodies =
   do as <- use agreements
-     case IxSet.getOne (as @= aid) of
-       Nothing -> pure $ Left $ "Could not find " <> (Text.pack $ show aid)
-       (Just oldAgreement) ->
+     case IxSet.toDescList (Proxy :: Proxy RevisionId) as of
+       [] -> pure $ Left $ "updateAgreementBody: Could not find " <> (Text.pack $ show aid)
+       (oldAgreement:_) ->
          do let newRevisionId = succ (oldAgreement ^. revisionId)
                 updatedAgreement :: Agreement
                 updatedAgreement =

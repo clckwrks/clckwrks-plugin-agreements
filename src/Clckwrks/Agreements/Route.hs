@@ -3,7 +3,7 @@ module Clckwrks.Agreements.Route where
 
 import Clckwrks.Monad               (ClckT, plugins)
 import Clckwrks.Admin.Template      (template)
-import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), createAgreement, getAgreement, getAgreementRevision, getRequiredAgreements, setAgreements, getLatestAgreementsMeta, recordAgreed)
+import Clckwrks.Agreements.API       (AgreementsPagePaths(..), AgreementsPluginState(..), createAgreement, getAgreement, getAgreementRevision, getRequiredAgreements, setAgreements, getLatestAgreementsMeta, recordAgreed, updateAgreement)
 import Clckwrks.Agreements.Monad     (AgreementsConfig(..), AgreementsM, clckT2AgreementsT)
 import Clckwrks.Agreements.Page.ViewAgreement (viewAgreementPage)
 import Clckwrks.Agreements.Types     (agreementsPluginName)
@@ -67,6 +67,7 @@ routeAgreementsAdminAPI aaURL =
      case aaURL of
        GetLatestAgreementsMeta -> getLatestAgreementsMeta
        CreateAgreement -> createAgreement
+       UpdateAgreement -> updateAgreement
        (GetAgreement aid) -> getAgreement aid
        (GetAgreementRevision aid rid) -> getAgreementRevision aid rid
 
