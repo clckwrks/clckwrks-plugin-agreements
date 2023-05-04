@@ -63,7 +63,7 @@ routeAgreementsAPI aURL =
 routeAgreementsAdminAPI :: AgreementsAdminApiURL
                -> AgreementsM Response
 routeAgreementsAdminAPI aaURL =
-  do liftIO $ putStrLn $ "aaURL = " ++ show aaURL
+  do -- liftIO $ putStrLn $ "aaURL = " ++ show aaURL
      case aaURL of
        GetLatestAgreementsMeta -> getLatestAgreementsMeta
        CreateAgreement -> createAgreement

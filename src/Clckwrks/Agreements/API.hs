@@ -1,4 +1,4 @@
-{-# language DataKinds, DeriveDataTypeable, FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, PolyKinds, TemplateHaskell, RankNTypes #-}
+{-# language CPP, DataKinds, DeriveDataTypeable, FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, PolyKinds, TemplateHaskell, RankNTypes #-}
 module Clckwrks.Agreements.API where
 
 import Control.Monad.State (MonadState, get)
@@ -35,6 +35,14 @@ import Network.HTTP.Client (responseBody)
 import qualified Network.HTTP.Client as HC
 import Web.Plugins.Core --             (Plugin(..), Plugins(..), PluginsState(pluginsConfig), When(..), addCleanup, addHandler, addPluginState, addPostHook, initPlugin, getConfig, getPluginRouteFn)
 
+
+debugStrLn :: String -> IO ()
+
+#ifdef DEBUG
+debugStrLn = putStrLn
+#else
+debugStrLn _ = pure ()
+#endif
 data AgreementsPagePaths = AgreementsPagePaths
   { _agreementsSettingsPath     :: Maybe FilePath
   , _agreementsSignupPluginPath :: Maybe FilePath
@@ -125,12 +133,14 @@ updateAgreement =
               (Just (Body bd)) ->
                 case runGetLazy safeGet bd of
                   (Left e) -> badRequest $ toResponse $ "could not decode UpdateAgreementData, error = " ++ e
-                  (Right (UpdateAgreementData aid nt bd)) ->
-                      do now       <- liftIO $ getCurrentTime
+                  (Right uad@(UpdateAgreementData aid nt bd)) ->
+                      do liftIO $ debugStrLn $ "API.updateAgreement - " ++ show uad
+                         now       <- liftIO $ getCurrentTime
                          mAgreement <- update (UpdateAgreementBody aid now uid nt bd)
                          case mAgreement of
                            (Right agreement) ->
-                             ok (toResponse (runPut (safePut (agreement ^. agreementRevision))))
+                             do liftIO $ debugStrLn $ "API.updateAgreement - " ++ show agreement
+                                ok (toResponse (runPut (safePut (agreement ^. agreementRevision))))
                            (Left err) ->
                              badRequest $ toResponse err
 

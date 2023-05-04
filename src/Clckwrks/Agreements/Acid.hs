@@ -112,7 +112,7 @@ updateAgreementBody :: AgreementId
                     -> Update AgreementsState (Either Text Agreement)
 updateAgreementBody aid now author note bodies =
   do as <- use agreements
-     case IxSet.toDescList (Proxy :: Proxy RevisionId) as of
+     case IxSet.toDescList (Proxy :: Proxy RevisionId) (as @= aid) of
        [] -> pure $ Left $ "updateAgreementBody: Could not find " <> (Text.pack $ show aid)
        (oldAgreement:_) ->
          do let newRevisionId = succ (oldAgreement ^. revisionId)
