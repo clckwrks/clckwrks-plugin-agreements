@@ -32,9 +32,9 @@ viewAgreementPage aid rid =
                </div>
                |]
        (Right agreement) ->
+          --                  <h2><% agreement ^. agreementName %></h2>
          template "Agreement" ()
           [hsx| <div class="agreements-plugin agreements-view-agreement">
-                 <h2><% agreement ^. agreementName %></h2>
                  <% rb agreement %>
                 </div>
               |]
